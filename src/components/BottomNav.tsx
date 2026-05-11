@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { LayoutGroup, motion } from "motion/react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
 import { useMatch } from "@/store/match";
 
@@ -22,7 +22,6 @@ const ROUTES: Route[] = [
 ];
 
 export function BottomNav() {
-  const router = useRouter();
   const pathname = usePathname();
   const matchActive = useMatch((s) => s.state != null);
 
@@ -52,8 +51,6 @@ export function BottomNav() {
                 aria-label={ariaLabel}
                 aria-current={active ? "page" : undefined}
                 prefetch={false}
-                onPointerEnter={() => router.prefetch(r.href)}
-                onFocus={() => router.prefetch(r.href)}
               >
                 {active && (
                   <motion.span
