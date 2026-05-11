@@ -17,30 +17,47 @@ const BOT_NAMES = [
 ];
 const MENU_HEIGHT = 184;
 
+function lobbyDefaults() {
+  const current = useSettings.getState();
+  const playerCount = Math.min(12, Math.max(3, current.defaultPlayers));
+  const decks = Math.min(MAX_DECKS, Math.max(1, current.defaultDecks));
+  const max = Math.max(1, maxTricks(playerCount, decks));
+  return {
+    playerCount,
+    decks,
+    tricks: Math.min(max, Math.max(1, current.defaultTricksPerHand)),
+    name: current.playerName || "You",
+  };
+}
+
 export default function LobbyPage() {
   const router = useRouter();
-  const settings = useSettings();
+  const setSetting = useSettings((s) => s.set);
+  const defaultBotMood = useSettings((s) => s.defaultBotMood);
   const startMatch = useMatch((s) => s.startMatch);
   const matchState = useMatch((s) => s.state);
   const abandon = useMatch((s) => s.abandonMatch);
   useGameViewportLock();
 
-  const [hydrated, setHydrated] = useState(false);
-  const [playerCount, setPlayerCount] = useState(4);
-  const [decks, setDecks] = useState(1);
-  const [tricks, setTricks] = useState(10);
-  const [name, setName] = useState("You");
+  const [initialDefaults] = useState(lobbyDefaults);
+  const [playerCount, setPlayerCount] = useState(initialDefaults.playerCount);
+  const [decks, setDecks] = useState(initialDefaults.decks);
+  const [tricks, setTricks] = useState(initialDefaults.tricks);
+  const [name, setName] = useState(initialDefaults.name);
   const [overrides, setOverrides] = useState<(Personality | null)[]>(Array(11).fill(null));
 
   useEffect(() => {
-    if (!hydrated) {
-      setPlayerCount(settings.defaultPlayers);
-      setDecks(Math.min(MAX_DECKS, Math.max(1, settings.defaultDecks)));
-      setTricks(settings.defaultTricksPerHand);
-      setName(settings.playerName);
-      setHydrated(true);
-    }
-  }, [hydrated, settings]);
+    const applyPersistedDefaults = () => {
+      const next = lobbyDefaults();
+      setPlayerCount(next.playerCount);
+      setDecks(next.decks);
+      setTricks(next.tricks);
+      setName(next.name);
+    };
+
+    if (useSettings.persist.hasHydrated()) applyPersistedDefaults();
+    return useSettings.persist.onFinishHydration(applyPersistedDefaults);
+  }, []);
 
   const max = maxTricks(playerCount, decks);
   const ceiling = Math.max(1, max);
@@ -63,16 +80,16 @@ export default function LobbyPage() {
 
   const onStart = () => {
     if (!tricksValid) return;
-    settings.set("defaultPlayers", playerCount);
-    settings.set("defaultDecks", decks);
-    settings.set("defaultTricksPerHand", tricks);
-    settings.set("playerName", name || "You");
+    setSetting("defaultPlayers", playerCount);
+    setSetting("defaultDecks", decks);
+    setSetting("defaultTricksPerHand", tricks);
+    setSetting("playerName", name || "You");
 
     startMatch({
       playerCount,
       decks,
       tricksPerHand: tricks,
-      botMood: settings.defaultBotMood,
+      botMood: defaultBotMood,
       botOverrides: overrides,
       playerName: name || "You",
     });
@@ -197,9 +214,9 @@ export default function LobbyPage() {
               </div>
               {Array.from({ length: playerCount - 1 }, (_, i) => {
                 const baseMood: Personality =
-                  settings.defaultBotMood === "mixed"
+                  defaultBotMood === "mixed"
                     ? moods[i % 3]
-                    : settings.defaultBotMood;
+                    : defaultBotMood;
                 return (
                   <div key={i} className="gb-seat-tile">
                     <Avatar name={BOT_NAMES[i % BOT_NAMES.length]} seed={i + 1} size={36} />
