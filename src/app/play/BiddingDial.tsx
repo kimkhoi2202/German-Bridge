@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { useMatch } from "@/store/match";
 import { lastBidderRestriction } from "@/lib/game";
 import { handEquity } from "@/lib/bot";
+import { stateTransition } from "@/lib/uiMotion";
 
 interface BiddingDialProps {
   variant?: "overlay" | "panel";
@@ -64,7 +65,7 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
         className="gb-bid-card"
         initial={{ opacity: 0, transform: "translateY(18px) scale(0.98)" }}
         animate={{ opacity: 1, transform: "translateY(0) scale(1)" }}
-        transition={{ type: "spring", duration: 0.34, bounce: 0.14 }}
+        transition={stateTransition}
       >
         <div className="gb-bid-head">
           <div>

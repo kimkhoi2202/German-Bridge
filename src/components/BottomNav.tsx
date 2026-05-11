@@ -6,6 +6,7 @@ import { LayoutGroup, motion } from "motion/react";
 import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
 import { useMatch } from "@/store/match";
+import { layoutTransition } from "@/lib/uiMotion";
 
 interface Route {
   href: string;
@@ -21,6 +22,8 @@ const ROUTES: Route[] = [
   { href: "/history", label: "History", icon: "history", id: "history" },
   { href: "/settings", label: "Settings", icon: "cog", id: "settings" },
 ];
+
+const MotionLink = motion.create(Link);
 
 export function BottomNav() {
   const pathname = usePathname();
@@ -54,7 +57,9 @@ export function BottomNav() {
   return (
     <nav className="bottom-nav" aria-label="Primary">
       <LayoutGroup id="bottom-nav">
-        <div
+        <motion.div
+          layout
+          transition={layoutTransition}
           className="routes"
           data-current={activeRoute.id}
           data-tooltip-warm={tooltipWarm ? "1" : "0"}
@@ -66,7 +71,9 @@ export function BottomNav() {
             const ariaLabel = badge ? `${r.label}, live match` : r.label;
             const tooltipLabel = badge ? `${r.label} · Live` : r.label;
             return (
-              <Link
+              <MotionLink
+                layout
+                transition={layoutTransition}
                 key={r.href}
                 href={r.href}
                 className="bn-item"
@@ -85,7 +92,7 @@ export function BottomNav() {
                   <motion.span
                     layoutId="bottom-nav-active"
                     className="bn-active-bg"
-                    transition={{ type: "spring", duration: 0.24, bounce: 0 }}
+                    transition={layoutTransition}
                     aria-hidden="true"
                   />
                 )}
@@ -101,10 +108,10 @@ export function BottomNav() {
                 <span className="bn-tooltip" aria-hidden="true">
                   {tooltipLabel}
                 </span>
-              </Link>
+              </MotionLink>
             );
           })}
-        </div>
+        </motion.div>
       </LayoutGroup>
     </nav>
   );

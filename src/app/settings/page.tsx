@@ -7,6 +7,7 @@ import { useMatch } from "@/store/match";
 import { Icon } from "@/components/Icon";
 import type { Personality } from "@/lib/bot";
 import { MAX_DECKS } from "@/lib/cards";
+import { layoutTransition, stateTransition } from "@/lib/uiMotion";
 import { useGameViewportLock } from "../useGameViewportLock";
 
 const THEMES = [
@@ -80,7 +81,7 @@ export default function SettingsPage() {
                       <motion.span
                         layoutId="settings-rail-active"
                         className="gb-settings-rail-active"
-                        transition={{ type: "spring", duration: 0.24, bounce: 0 }}
+                        transition={layoutTransition}
                         aria-hidden="true"
                       />
                     )}
@@ -269,7 +270,7 @@ function Segmented({
             <motion.span
               layoutId={layoutId}
               className="gb-segmented-active"
-              transition={{ type: "spring", duration: 0.22, bounce: 0 }}
+              transition={layoutTransition}
               aria-hidden="true"
             />
           )}
@@ -290,19 +291,21 @@ function Toggle({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <button
+    <motion.button
       type="button"
       onClick={() => onChange(!value)}
       className={"gb-toggle" + (value ? " on" : "")}
       aria-label={label}
       aria-pressed={value}
+      whileTap={{ scale: 0.985 }}
+      transition={stateTransition}
     >
       <motion.span
         className="gb-toggle-thumb"
         animate={{ x: value ? 20 : 0 }}
-        transition={{ type: "spring", duration: 0.2, bounce: 0 }}
+        transition={layoutTransition}
       />
-    </button>
+    </motion.button>
   );
 }
 

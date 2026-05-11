@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { SUIT_CHAR, SUIT_NAME, isRed, sortHand, legalCards } from "@/lib/cards";
 import type { Card } from "@/lib/cards";
 import type { GameState, PlayLogEntry } from "@/lib/game";
+import { exitTransition, stateTransition } from "@/lib/uiMotion";
 import { BiddingDial } from "./BiddingDial";
 
 type SeatZone = "left" | "top" | "right";
@@ -170,6 +171,7 @@ export function Table() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
+                    transition={stateTransition}
                     className="gb-deal-msg"
                   >
                     Dealing…
@@ -179,10 +181,10 @@ export function Table() {
                 {state.phase === "trump" && state.trumpCard && (
                   <motion.div
                     key="trump"
-                    initial={{ scale: 0.85, opacity: 0, rotateY: 180 }}
-                    animate={{ scale: 1, opacity: 1, rotateY: 0 }}
+                    initial={{ opacity: 0, transform: "translateY(10px) scale(0.98)" }}
+                    animate={{ opacity: 1, transform: "translateY(0) scale(1)" }}
                     exit={{ opacity: 0 }}
-                    transition={{ type: "spring", stiffness: 240, damping: 20 }}
+                    transition={stateTransition}
                     className="gb-trump-reveal"
                   >
                     <div className="eyebrow">Trump for the hand</div>
@@ -197,6 +199,7 @@ export function Table() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
+                    transition={stateTransition}
                     className="gb-center-meta"
                   >
                     <div className="eyebrow">Bidding</div>
@@ -225,6 +228,7 @@ export function Table() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
+                    transition={exitTransition}
                     style={{ gap: `${playedCardGap}px` }}
                     className="gb-played-fan"
                   >
@@ -233,9 +237,9 @@ export function Table() {
                       return (
                         <motion.div
                           key={`${p.playerIdx}-${p.card.key}-${index}`}
-                          initial={{ y: 12, opacity: 0, scale: 0.94 }}
-                          animate={{ y: 0, opacity: 1, scale: 1 }}
-                          transition={{ type: "spring", stiffness: 220, damping: 22 }}
+                          initial={{ opacity: 0, transform: "translateY(10px) scale(0.96)" }}
+                          animate={{ opacity: 1, transform: "translateY(0) scale(1)" }}
+                          transition={stateTransition}
                           className={"gb-trick-card" + (isWinner ? " winner" : "")}
                         >
                           <div className="gb-trick-name">
@@ -341,7 +345,7 @@ export function Table() {
           </div>
 
           <div className="gb-hero-hand">
-            {sortedYou.map((c, i) => {
+            {sortedYou.map((c) => {
               const isYourTurn =
                 state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null;
               const isLegal = state.phase !== "playing" || myLegal.has(c.key);
@@ -360,7 +364,6 @@ export function Table() {
                     (isTrump && isRed(c.s) ? " trump-red" : "")
                   }
                   data-trump-suit={isTrump ? SUIT_CHAR[c.s] : undefined}
-                  style={{ animationDelay: `${i * 30}ms` }}
                   disabled={disabled}
                   aria-label={
                     isYourTurn
