@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { memo } from "react";
 import { cn } from "@/lib/cn";
 import { isRed, type Card, SUIT_NAME } from "@/lib/cards";
 
@@ -29,9 +29,10 @@ interface Props {
   size?: number;
   faceDown?: boolean;
   className?: string;
+  priority?: boolean;
 }
 
-export function PlayingCard({ card, size = 76, faceDown = false, className }: Props) {
+function PlayingCardImpl({ card, size = 76, faceDown = false, className, priority = false }: Props) {
   if (faceDown || !card) {
     return (
       <div
@@ -43,6 +44,7 @@ export function PlayingCard({ card, size = 76, faceDown = false, className }: Pr
   const red = isRed(card.s);
   const rank = card.r === "T" ? "10" : card.r;
   const src = faceCardSrc(card);
+  const loading = priority ? "eager" : "lazy";
 
   return (
     <div
@@ -50,14 +52,28 @@ export function PlayingCard({ card, size = 76, faceDown = false, className }: Pr
       style={{ ["--cw" as string]: `${size}px` }}
       data-suit={card.s}
     >
-      <Image
+      {/* eslint-disable-next-line @next/next/no-img-element -- Local SVG card faces avoid Next image optimization and its client runtime. */}
+      <img
         src={src}
         alt={`${rank} ${SUIT_NAME[card.s]} of playing card`}
         className="card-face-art"
-        fill
-        unoptimized
-        sizes={`${size}px`}
+        loading={loading}
+        decoding="async"
+        fetchPriority={priority ? "high" : undefined}
+        draggable={false}
       />
     </div>
   );
 }
+
+export const PlayingCard = memo(
+  PlayingCardImpl,
+  (prev, next) =>
+    prev.card?.key === next.card?.key &&
+    prev.size === next.size &&
+    prev.faceDown === next.faceDown &&
+    prev.className === next.className &&
+    prev.priority === next.priority,
+);
+
+PlayingCard.displayName = "PlayingCard";

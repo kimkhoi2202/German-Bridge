@@ -17,25 +17,29 @@ export default function PlayPage() {
   const revealTrump = useMatch((s) => s.revealTrump);
   const beginBidding = useMatch((s) => s.beginBidding);
   const settle = useMatch((s) => s.settle);
-  const settings = useSettings();
+  const cardBack = useSettings((s) => s.cardBack);
+  const layout = useSettings((s) => s.layout);
+  const phase = state?.phase;
+  const round = state?.round;
+  const trickIdx = state?.trickIdx;
   useGameViewportLock();
 
   // Auto-advance dealing → trump → bidding with timed reveals.
   useEffect(() => {
-    if (!state) return;
-    if (state.phase === "dealing") {
+    if (!phase) return;
+    if (phase === "dealing") {
       const t = setTimeout(() => revealTrump(), 900);
       return () => clearTimeout(t);
     }
-    if (state.phase === "trump") {
+    if (phase === "trump") {
       const t = setTimeout(() => beginBidding(), 1400);
       return () => clearTimeout(t);
     }
-    if (state.phase === "trick-end") {
+    if (phase === "trick-end") {
       const t = setTimeout(() => settle(), 1300);
       return () => clearTimeout(t);
     }
-  }, [state?.phase, state?.round, revealTrump, beginBidding, settle, state]);
+  }, [phase, round, trickIdx, revealTrump, beginBidding, settle]);
 
   // Drive bots automatically when it's their turn.
   useBotDriver();
@@ -55,8 +59,8 @@ export default function PlayPage() {
   return (
     <div
       className="gb-play-screen relative"
-      data-cardback={settings.cardBack}
-      data-layout={settings.layout}
+      data-cardback={cardBack}
+      data-layout={layout}
     >
       <Table />
       <TrickBanner />

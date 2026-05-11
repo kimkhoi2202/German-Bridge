@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useMatch } from "@/store/match";
 import { useSettings } from "@/store/settings";
@@ -73,7 +74,9 @@ export function Table() {
   const state = useMatch((s) => s.state);
   const play = useMatch((s) => s.play);
   const abandon = useMatch((s) => s.abandonMatch);
-  const settings = useSettings();
+  const layout = useSettings((s) => s.layout);
+  const cardBack = useSettings((s) => s.cardBack);
+  const showTrumpHints = useSettings((s) => s.showTrumpHints);
 
   if (!state) return null;
 
@@ -82,9 +85,7 @@ export function Table() {
   const sortedYou = trumpSuit ? sortHand(youHand, trumpSuit) : youHand;
   const leadSuit = state.currentTrick.length ? state.currentTrick[0].card.s : null;
   const myLegal =
-    state.phase === "playing"
-      ? new Set(legalCards(youHand, leadSuit).map((c) => c.key))
-      : new Set<string>();
+    state.phase === "playing" ? new Set(legalCards(youHand, leadSuit).map((c) => c.key)) : null;
   const playLog = state.playLog ?? [];
   const trickCards = state.currentTrick.length;
   const tableFanMaxWidth = typeof window === "undefined" ? 620 : Math.min(window.innerWidth * 0.9, 620);
@@ -108,11 +109,14 @@ export function Table() {
   const density = seatDensity(state.players.length);
   const miniCardLimit = density === "dense" ? 4 : 5;
   const miniCardOverlap = density === "dense" ? -7 : density === "compact" ? -8 : -10;
+  const seatPositions = state.players.map((_, i) =>
+    i === 0 ? null : seatPos(i, state.players.length),
+  );
 
   const totalBid = state.bids.filter((b) => b != null).reduce<number>((a, b) => a + (b ?? 0), 0);
 
   return (
-    <div className={"gb-table-wrap layout-" + settings.layout} data-phase={state.phase}>
+    <div className={"gb-table-wrap layout-" + layout} data-phase={state.phase}>
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">
@@ -188,7 +192,7 @@ export function Table() {
                     className="gb-trump-reveal"
                   >
                     <div className="eyebrow">Trump for the hand</div>
-                    <PlayingCard card={state.trumpCard} size={92} />
+                    <PlayingCard card={state.trumpCard} size={92} priority />
                     <div className="gb-trump-name">{SUIT_NAME[state.trumpCard.s]}</div>
                   </motion.div>
                 )}
@@ -263,11 +267,11 @@ export function Table() {
             {/* Seats around the felt */}
             {state.players.map((p, i) => {
               if (i === 0) return null;
-              const pos = seatPos(i, state.players.length);
               const isActing =
                 (state.phase === "bidding" && state.bidTurn === i) ||
                 (state.phase === "playing" && state.turnIdx === i && state.trickWinner == null);
               const isDealer = state.dealerIdx === i;
+              const pos = seatPositions[i]!;
               return (
                 <div
                   key={p.id}
@@ -281,7 +285,7 @@ export function Table() {
                       return (
                         <div
                           key={j}
-                          className={"gb-mini-back back-" + settings.cardBack}
+                          className={"gb-mini-back back-" + cardBack}
                           style={{
                             marginLeft: j === 0 ? 0 : miniCardOverlap,
                             transform: `translateY(${Math.abs(j - center) * 1.5}px) rotate(${(j - center) * 4}deg)`,
@@ -345,11 +349,11 @@ export function Table() {
           </div>
 
           <div className="gb-hero-hand">
-            {sortedYou.map((c) => {
+            {sortedYou.map((c, index) => {
               const isYourTurn =
                 state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null;
-              const isLegal = state.phase !== "playing" || myLegal.has(c.key);
-              const isTrump = c.s === trumpSuit && settings.showTrumpHints;
+              const isLegal = state.phase !== "playing" || myLegal?.has(c.key) === true;
+              const isTrump = c.s === trumpSuit && showTrumpHints;
               const disabled = !isYourTurn || !isLegal;
               const rank = c.r === "T" ? "10" : c.r;
               const cardName = `${rank} of ${SUIT_NAME[c.s]}`;
@@ -374,7 +378,7 @@ export function Table() {
                   }
                   onClick={() => play(0, c)}
                 >
-                  <PlayingCard card={c} size={72} />
+                  <PlayingCard card={c} size={72} priority={index === 0} />
                 </button>
               );
             })}
@@ -408,14 +412,14 @@ function groupByTrick(entries: PlayLogEntry[]): Array<[number, PlayLogEntry[]]> 
     ]);
 }
 
-function PlayedCardsRail({
+const PlayedCardsRail = memo(function PlayedCardsRail({
   state,
   playLog,
 }: {
   state: GameState;
   playLog: PlayLogEntry[];
 }) {
-  const groups = groupByTrick(playLog);
+  const groups = useMemo(() => groupByTrick(playLog), [playLog]);
   const totalCards = state.tricksTotal * state.players.length;
 
   return (
@@ -475,4 +479,4 @@ function PlayedCardsRail({
       </div>
     </aside>
   );
-}
+});

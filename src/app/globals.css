@@ -289,6 +289,7 @@ input:focus-visible {
   height: calc(var(--cw, 76px) * 1.4);
   flex: 0 0 auto;
   position: relative;
+  contain: layout paint style;
   overflow: hidden;
   border-radius: calc(var(--cw, 76px) * 0.09);
   background: transparent;
@@ -765,6 +766,7 @@ input:focus-visible {
 }
 
 .gb-lobby-block {
+  contain: layout paint;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1275,6 +1277,7 @@ input:focus-visible {
 }
 
 .gb-felt {
+  contain: layout paint;
   position: relative;
   width: min(94vw, 1080px);
   height: min(54dvh, 520px);
@@ -1424,6 +1427,7 @@ input:focus-visible {
 }
 
 .gb-play-log {
+  contain: layout paint;
   min-width: 0;
   height: min(54dvh, 520px);
   min-height: 390px;
@@ -1498,6 +1502,8 @@ input:focus-visible {
 }
 
 .gb-play-log-trick {
+  content-visibility: auto;
+  contain-intrinsic-size: 76px;
   flex: 0 0 auto;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1813,6 +1819,7 @@ input:focus-visible {
 }
 
 .gb-hero-hand {
+  contain: layout paint;
   width: max-content;
   max-width: min(94vw, 1040px);
   display: flex;
@@ -2454,6 +2461,7 @@ input:focus-visible {
 }
 
 .gb-history-card {
+  contain: layout paint;
   min-width: 0;
   padding: 18px;
   box-shadow: none;
@@ -2765,6 +2773,7 @@ input:focus-visible {
 }
 
 .gb-settings-section {
+  contain: layout paint;
   min-width: 0;
   scroll-margin-block: 14px 28px;
   padding: 16px;
