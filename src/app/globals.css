@@ -671,6 +671,13 @@ input:focus-visible {
   overscroll-behavior: none;
 }
 
+.gb-route-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--app-bg);
+  color: var(--text-muted);
+}
+
 .gb-lobby::before {
   content: "";
   position: fixed;
@@ -2515,9 +2522,13 @@ input:focus-visible {
 }
 
 .gb-history-winner {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--text);
   font-size: 20px;
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gb-history-top {
@@ -2540,9 +2551,13 @@ input:focus-visible {
 }
 
 .gb-history-meta {
+  max-width: 100%;
+  overflow: hidden;
   margin-top: 2px;
   color: var(--text-subtle);
   font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gb-history-score-grid {

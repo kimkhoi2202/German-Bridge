@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { sanitizePlayerName } from "@/lib/hardening";
 
 const PALETTE: [string, string][] = [
   ["oklch(0.72 0.16 30)", "oklch(0.50 0.18 350)"],
@@ -29,8 +30,9 @@ export function Avatar({
   className?: string;
 }) {
   const [c1, c2] = PALETTE[seed % PALETTE.length];
+  const label = sanitizePlayerName(name, "?");
   const initials =
-    name
+    label
       .split(/\s+/)
       .map((s) => s[0])
       .filter(Boolean)
@@ -49,7 +51,7 @@ export function Avatar({
         fontSize: Math.max(11, size * 0.36),
         background: `linear-gradient(135deg, ${c1}, ${c2})`,
       }}
-      aria-label={name}
+      aria-label={label}
     >
       {initials}
     </div>

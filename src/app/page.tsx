@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
 import { MAX_DECKS, maxTricks } from "@/lib/cards";
+import { clampDecks, clampPlayers, clampTricksPerHand, sanitizePlayerName } from "@/lib/hardening";
 import type { Personality } from "@/lib/bot";
 import { useMatch } from "@/store/match";
 import { useSettings } from "@/store/settings";
@@ -19,14 +20,13 @@ const MENU_HEIGHT = 184;
 
 function lobbyDefaults() {
   const current = useSettings.getState();
-  const playerCount = Math.min(12, Math.max(3, current.defaultPlayers));
-  const decks = Math.min(MAX_DECKS, Math.max(1, current.defaultDecks));
-  const max = Math.max(1, maxTricks(playerCount, decks));
+  const playerCount = clampPlayers(current.defaultPlayers);
+  const decks = clampDecks(current.defaultDecks);
   return {
     playerCount,
     decks,
-    tricks: Math.min(max, Math.max(1, current.defaultTricksPerHand)),
-    name: current.playerName || "You",
+    tricks: clampTricksPerHand(current.defaultTricksPerHand, playerCount, decks, 1),
+    name: sanitizePlayerName(current.playerName),
   };
 }
 
@@ -80,10 +80,11 @@ export default function LobbyPage() {
 
   const onStart = () => {
     if (!tricksValid) return;
+    const playerName = sanitizePlayerName(name);
     setSetting("defaultPlayers", playerCount);
     setSetting("defaultDecks", decks);
     setSetting("defaultTricksPerHand", tricks);
-    setSetting("playerName", name || "You");
+    setSetting("playerName", playerName);
 
     startMatch({
       playerCount,
@@ -91,7 +92,7 @@ export default function LobbyPage() {
       tricksPerHand: tricks,
       botMood: defaultBotMood,
       botOverrides: overrides,
-      playerName: name || "You",
+      playerName,
     });
     router.push("/play");
   };

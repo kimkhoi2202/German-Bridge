@@ -5,6 +5,7 @@ import { useMatch } from "@/store/match";
 import { Avatar } from "@/components/Avatar";
 import { TallyTable } from "@/components/Tally";
 import { useGameViewportLock } from "../useGameViewportLock";
+import { finiteNumber, sanitizePlayerName } from "@/lib/hardening";
 
 export default function HistoryPage() {
   const archive = useMatch((s) => s.archive);
@@ -37,9 +38,19 @@ export default function HistoryPage() {
               </button>
             </div>
             {archive.map((m, i) => {
-              const winner = m.players[m.winnerIdx];
-              const date = new Date(m.finishedAt);
+              const players = m.players.length ? m.players : [{ name: "Player", isHuman: true }];
+              const winner = players[m.winnerIdx] ?? players[0];
+              const date = new Date(finiteNumber(m.finishedAt, Date.now()));
               const isOpen = openIdx === i;
+              const playerNames = players.map((p, idx) =>
+                sanitizePlayerName(p.name, idx === 0 ? "You" : `Player ${idx + 1}`),
+              );
+              const cumulative = players.map((_, idx) => finiteNumber(m.cumulative[idx], 0));
+              const config = {
+                players: finiteNumber(m.config.players, players.length),
+                decks: finiteNumber(m.config.decks, 1),
+                tricksPerHand: finiteNumber(m.config.tricksPerHand, 1),
+              };
               return (
                 <div key={i} className="gb-history-card">
                   <button
@@ -49,19 +60,19 @@ export default function HistoryPage() {
                   >
                     <div>
                       <div className="gb-history-winner">
-                        {winner.name} won
+                        {sanitizePlayerName(winner.name, "Player")} won
                       </div>
                       <div className="gb-history-meta mono">
-                        {date.toLocaleString()} · {m.config.players} players · {m.config.decks}{" "}
-                        deck{m.config.decks > 1 ? "s" : ""} · {m.config.tricksPerHand} tricks
+                        {date.toLocaleString()} · {config.players} players · {config.decks}{" "}
+                        deck{config.decks > 1 ? "s" : ""} · {config.tricksPerHand} tricks
                       </div>
                     </div>
                     <div className="eyebrow">{isOpen ? "Hide" : "Open"}</div>
                   </button>
 
                   <div className="gb-history-score-grid">
-                    {m.players.map((p, idx) => {
-                      const score = m.cumulative[idx];
+                    {players.map((p, idx) => {
+                      const score = cumulative[idx];
                       const isWinner = idx === m.winnerIdx;
                       return (
                         <div
@@ -70,7 +81,7 @@ export default function HistoryPage() {
                         >
                           <Avatar name={p.name} seed={idx} size={28} />
                           <div className="gb-history-score-copy">
-                            <div className="gb-history-score-name">{p.name}</div>
+                            <div className="gb-history-score-name">{playerNames[idx]}</div>
                             <div
                               className={"gb-history-score-num mono " + (score >= 0 ? "pos" : "neg")}
                             >
@@ -85,10 +96,10 @@ export default function HistoryPage() {
                   {isOpen && (
                     <div className="gb-history-detail">
                       <TallyTable
-                        playerNames={m.players.map((p) => p.name)}
-                        isYou={m.players.map((p) => p.isHuman)}
+                        playerNames={playerNames}
+                        isYou={players.map((p) => p.isHuman)}
                         history={m.hands ?? m.rounds ?? []}
-                        cumulative={m.cumulative}
+                        cumulative={cumulative}
                       />
                     </div>
                   )}

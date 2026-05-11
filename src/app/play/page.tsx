@@ -40,18 +40,14 @@ export default function PlayPage() {
   // Drive bots automatically when it's their turn.
   useBotDriver();
 
+  useEffect(() => {
+    if (!state) router.replace("/");
+  }, [state, router]);
+
   if (!state) {
     return (
-      <div className="px-7 py-12 max-w-[680px] mx-auto text-center">
-        <div className="eyebrow">No active match</div>
-        <h1 className="display text-5xl mt-2 mb-4">Set the table first.</h1>
-        <p className="opacity-70 mb-6">
-          Head to the Lobby to choose players, decks, and tricks per hand. Your match auto-saves
-          while you play.
-        </p>
-        <button className="btn brass" onClick={() => router.push("/")}>
-          Go to Lobby
-        </button>
+      <div className="gb-play-screen gb-route-fallback">
+        <div className="eyebrow">Returning to lobby</div>
       </div>
     );
   }

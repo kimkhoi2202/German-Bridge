@@ -4,6 +4,13 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Personality } from "@/lib/bot";
+import {
+  clampDecks,
+  clampPlayers,
+  clampTricksPerHand,
+  sanitizePersonality,
+  sanitizePlayerName,
+} from "@/lib/hardening";
 
 const memoryStorage = (() => {
   const map = new Map<string, string>();
@@ -51,27 +58,67 @@ const DEFAULTS: Settings = {
   playerName: "You",
 };
 
+const THEMES: readonly Theme[] = ["emerald", "midnight", "graphite"];
+const CARD_BACKS: readonly CardBack[] = ["classic", "lattice", "monogram"];
+const TABLE_LAYOUTS: readonly TableLayout[] = ["salon", "pad"];
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function migratedTheme(value: unknown): Theme {
+  if (value === "studio" || value === "bone") return "graphite";
+  if (value === "midnight" || value === "carnival") return "midnight";
+  if (value === "emerald" || value === "felt") return "emerald";
+  return DEFAULTS.theme;
+}
+
+export function sanitizeSettings(value: Partial<Settings> | undefined): Settings {
+  const defaultPlayers = clampPlayers(value?.defaultPlayers, DEFAULTS.defaultPlayers);
+  const defaultDecks = clampDecks(value?.defaultDecks, DEFAULTS.defaultDecks);
+  const defaultTricksPerHand = clampTricksPerHand(
+    value?.defaultTricksPerHand,
+    defaultPlayers,
+    defaultDecks,
+    DEFAULTS.defaultTricksPerHand,
+  );
+
+  return {
+    theme: oneOf(migratedTheme(value?.theme), THEMES, DEFAULTS.theme),
+    cardBack: oneOf(value?.cardBack, CARD_BACKS, DEFAULTS.cardBack),
+    layout: oneOf(value?.layout, TABLE_LAYOUTS, DEFAULTS.layout),
+    showTrumpHints: bool(value?.showTrumpHints, DEFAULTS.showTrumpHints),
+    animations: bool(value?.animations, DEFAULTS.animations),
+    defaultPlayers,
+    defaultDecks,
+    defaultTricksPerHand,
+    defaultBotMood: sanitizePersonality(value?.defaultBotMood, DEFAULTS.defaultBotMood),
+    playerName: sanitizePlayerName(value?.playerName, DEFAULTS.playerName),
+  };
+}
+
 export const useSettings = create<Settings & SettingsActions>()(
   persist(
     (set) => ({
       ...DEFAULTS,
-      set: (key, value) => set({ [key]: value } as Partial<Settings>),
+      set: (key, value) =>
+        set((state) => sanitizeSettings({ ...state, [key]: value })),
       reset: () => set(DEFAULTS),
     }),
     {
       name: "gb-settings",
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const value = persisted as Partial<Settings> | undefined;
-        if (!value) return DEFAULTS;
-        const oldTheme = (value as { theme?: string }).theme;
-        const theme: Theme =
-          oldTheme === "midnight"
-            ? "midnight"
-            : oldTheme === "studio"
-              ? "graphite"
-              : "emerald";
-        return { ...DEFAULTS, ...value, theme };
+        return sanitizeSettings(value);
+      },
+      merge: (persisted, current) => {
+        const value = persisted as Partial<Settings> | undefined;
+        return { ...current, ...sanitizeSettings(value) };
       },
       storage: createJSONStorage(() =>
         typeof localStorage !== "undefined" ? localStorage : memoryStorage,

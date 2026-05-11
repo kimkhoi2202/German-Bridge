@@ -124,4 +124,27 @@ describe("useMatch — store integration", () => {
     expect(s.players[2].personality).toBe("aggressive"); // override
     expect(s.players[3].personality).toBe("cautious");
   });
+
+  it("sanitizes match setup and ignores stale player actions", () => {
+    const m = useMatch.getState();
+    m.startMatch({
+      playerCount: 99,
+      decks: 99,
+      tricksPerHand: 999,
+      botMood: "wild" as never,
+      botOverrides: ["aggressive", "wild" as never, null],
+      playerName: "  A Very Very Very Very Long Name  ",
+    });
+
+    const s = useMatch.getState().state!;
+    expect(s.players).toHaveLength(12);
+    expect(s.decks).toBe(4);
+    expect(s.tricksPerHand).toBe(17);
+    expect(s.players[0].name).toBe("A Very Very Very Very Lo");
+    expect(s.players[1].personality).toBe("aggressive");
+    expect(s.players[2].personality).toBe("mixed");
+
+    expect(() => m.bid(0, 3)).not.toThrow();
+    expect(() => m.play(0, { r: "A", s: "s", d: 0, key: "missing" })).not.toThrow();
+  });
 });
