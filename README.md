@@ -3,8 +3,6 @@
 A fully playable, single-player-vs-bots implementation of German Bridge, the
 trick-taking card game, built with **Next.js 15 + TypeScript**.
 
-The original handoff mockup lives in `archive/mockup/` for reference.
-
 ## Run it
 
 ```bash
