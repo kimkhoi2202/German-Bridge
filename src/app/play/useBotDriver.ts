@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import { useMatch } from "@/store/match";
-import { botBid, botPlay } from "@/lib/bot";
-import { lastBidderRestriction } from "@/lib/game";
+import { chooseBid, chooseCard } from "@/lib/bot";
+import { createObservation } from "@/lib/botObservation";
 
 /**
  * Side-effect hook: when it's a bot's turn (during bidding or playing),
@@ -24,22 +24,8 @@ export function useBotDriver() {
     if (!player || player.isHuman) return;
     if (state.bids[idx] != null) return;
 
-    const placedBefore = state.bids.filter((b) => b != null).length;
-    const isLast = placedBefore === state.players.length - 1;
-    const restricted = isLast
-      ? lastBidderRestriction(state.bids, state.tricksTotal)
-      : null;
-
-    const trumpSuit = state.trumpCard?.s ?? null;
     const t = setTimeout(() => {
-      const value = botBid({
-        hand: state.hands[idx],
-        trumpSuit,
-        personality: player.personality,
-        tricksTotal: state.tricksTotal,
-        isLast,
-        restricted,
-      });
+      const value = chooseBid(createObservation(state, idx));
       try {
         bid(idx, value);
       } catch {
@@ -57,15 +43,8 @@ export function useBotDriver() {
     const player = state.players[idx];
     if (!player || player.isHuman) return;
 
-    const trumpSuit = state.trumpCard?.s ?? null;
     const t = setTimeout(() => {
-      const card = botPlay({
-        hand: state.hands[idx],
-        currentTrick: state.currentTrick,
-        trumpSuit,
-        bid: state.bids[idx] ?? 0,
-        won: state.won[idx] ?? 0,
-      });
+      const card = chooseCard(createObservation(state, idx));
       try {
         play(idx, card);
       } catch {

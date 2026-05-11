@@ -71,13 +71,40 @@ src/lib/cards.test.ts          15 tests
 src/lib/scoring.test.ts         5 tests
 src/lib/trick.test.ts           8 tests
 src/lib/bot.test.ts             8 tests
+src/lib/botObservation.test.ts  4 tests
 src/lib/game.test.ts           12 tests
 src/lib/integration.test.ts     3 tests   ← full match simulations
+src/lib/ai/dataset.test.ts      3 tests
+src/lib/ai/headless.test.ts     5 tests
+src/lib/ai/policies.test.ts     1 test
+src/lib/ai/ratings.test.ts      8 tests
 src/store/match.test.ts         4 tests   ← store actions end-to-end
+src/app/play/BiddingDial.test.tsx 2 tests
 src/components/NumberKnob.test.tsx 5 tests
 src/test/env.test.ts            1 test
                               ───────
-                               61 tests
+                               84 tests
+```
+
+## AI Training Scaffold
+
+The AI tooling is locked to the first research target: **2 decks, 4-12 players,
+one flipped trump card, variable tricks per hand**.
+
+Generate JSONL decision examples for supervised learning or later RL pipelines:
+
+```bash
+pnpm ai:dataset -- --players 6 --tricks 8 --matches 1000 --out ai-data/6p-8t.jsonl
+```
+
+Each JSONL line contains a fair `BotObservation`, the policy action, and the
+final score/rank outcome. Generated datasets go in `ai-data/`, which is ignored
+by git.
+
+Run a quick rollout-search challenger evaluation against baseline bots:
+
+```bash
+pnpm ai:evaluate -- --players 6 --tricks 8 --matches 100 --challenger-seat 0
 ```
 
 ## Notable choices

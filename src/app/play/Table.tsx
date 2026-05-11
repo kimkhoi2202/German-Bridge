@@ -111,7 +111,7 @@ export function Table() {
   const totalBid = state.bids.filter((b) => b != null).reduce<number>((a, b) => a + (b ?? 0), 0);
 
   return (
-    <div className={"gb-table-wrap layout-" + settings.layout}>
+    <div className={"gb-table-wrap layout-" + settings.layout} data-phase={state.phase}>
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">

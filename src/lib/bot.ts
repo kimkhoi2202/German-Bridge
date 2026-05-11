@@ -6,8 +6,13 @@
 import { type Card, type Suit, rankVal } from "./cards";
 import { legalCards } from "./cards";
 import { resolveTrick, type Play } from "./trick";
+import type { BotObservation } from "./botObservation";
 
 export type Personality = "cautious" | "mixed" | "aggressive";
+
+function personalityFor(observation: BotObservation): Personality {
+  return observation.players[observation.playerIdx]?.personality ?? "mixed";
+}
 
 /** Heuristic count of "expected tricks" in a hand given the trump suit. */
 export function handEquity(hand: readonly Card[], trump: Suit | null): number {
@@ -48,6 +53,34 @@ export function botBid(args: {
     }
   }
   return bid;
+}
+
+export function chooseBid(observation: BotObservation): number {
+  const legal = observation.legalBids;
+  if (legal.length === 0) {
+    throw new Error("chooseBid: no legal bids in observation");
+  }
+
+  let eq = handEquity(observation.ownHand, observation.trumpSuit);
+  const personality = personalityFor(observation);
+  if (personality === "aggressive") eq *= 1.2;
+  else if (personality === "cautious") eq *= 0.78;
+
+  const preferred = Math.max(
+    0,
+    Math.min(observation.tricksTotal, Math.round(eq)),
+  );
+  if (legal.includes(preferred)) return preferred;
+
+  const fallbackOrder = [
+    preferred - 1,
+    preferred + 1,
+    preferred - 2,
+    preferred + 2,
+    0,
+    observation.tricksTotal,
+  ];
+  return fallbackOrder.find((bid) => legal.includes(bid)) ?? legal[0];
 }
 
 export function botPlay(args: {
@@ -98,4 +131,24 @@ export function botPlay(args: {
     if (losers.length) return losers[losers.length - 1];
   }
   return sorted[0];
+}
+
+export function chooseCard(observation: BotObservation): Card {
+  const legal = observation.legalCards.length
+    ? observation.legalCards
+    : legalCards(
+        observation.ownHand,
+        observation.currentTrick.length ? observation.currentTrick[0].card.s : null,
+      );
+  if (legal.length === 0) {
+    throw new Error("chooseCard: no legal cards in observation");
+  }
+
+  return botPlay({
+    hand: legal,
+    currentTrick: observation.currentTrick,
+    trumpSuit: observation.trumpSuit,
+    bid: observation.bids[observation.playerIdx] ?? 0,
+    won: observation.won[observation.playerIdx] ?? 0,
+  });
 }
