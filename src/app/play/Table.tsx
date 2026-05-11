@@ -112,6 +112,8 @@ export function Table() {
   const seatPositions = state.players.map((_, i) =>
     i === 0 ? null : seatPos(i, state.players.length),
   );
+  const tablePlayers = `${state.players.length} player${state.players.length === 1 ? "" : "s"}`;
+  const tableDecks = `${state.decks} deck${state.decks === 1 ? "" : "s"}`;
 
   const totalBid = state.bids.filter((b) => b != null).reduce<number>((a, b) => a + (b ?? 0), 0);
 
@@ -120,9 +122,9 @@ export function Table() {
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">
-          <span className="lbl">Hand</span>
+          <span className="lbl">Table</span>
           <span className="mono">
-            {state.players.length}p · {state.decks}d
+            {tablePlayers} · {tableDecks}
           </span>
         </div>
         <div className="gb-hud-pill">
@@ -207,13 +209,18 @@ export function Table() {
                     className="gb-center-meta"
                   >
                     <div className="eyebrow">Bidding</div>
-                    <div className="gb-bid-tally">
+                    <div
+                      className="gb-bid-tally"
+                      aria-label={`${totalBid} bid so far, ${state.tricksTotal} available`}
+                    >
                       <div>
                         <b>{totalBid}</b>
+                        {" "}
                         <span>bid so far</span>
                       </div>
                       <div>
                         <b>{state.tricksTotal}</b>
+                        {" "}
                         <span>available</span>
                       </div>
                     </div>

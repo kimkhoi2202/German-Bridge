@@ -47,9 +47,12 @@ describe("BiddingDial", () => {
 
     render(<BiddingDial />);
 
-    const restrictedBid = screen.getByRole("button", { name: "0" });
+    const restrictedBid = screen.getByRole("button", {
+      name: "Bid 0 unavailable; total cannot equal tricks",
+    });
     expect(restrictedBid).toBeDisabled();
     expect(restrictedBid).toHaveAttribute("title", "Total can't equal tricks");
+    expect(screen.getByRole("button", { name: "Bid 1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Place bid · 1" })).not.toBeDisabled();
   });
 

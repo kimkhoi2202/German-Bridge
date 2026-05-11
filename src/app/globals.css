@@ -2048,6 +2048,8 @@ input:focus-visible {
   min-width: 44px;
   height: 48px;
   position: relative;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-wash-strong);
@@ -2115,17 +2117,6 @@ input:focus-visible {
   transform: translateX(-50%) translateY(0);
 }
 
-.gb-bid-rule {
-  margin: 0 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 9px 11px;
-  background: var(--surface-wash);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
 .gb-bid-foot {
   display: flex;
   align-items: center;
@@ -2146,10 +2137,6 @@ input:focus-visible {
 
 .gb-bid-equity b {
   color: var(--text);
-}
-
-.gb-bid-warn {
-  color: var(--danger-text);
 }
 
 .gb-bid-submit {
@@ -2478,6 +2465,19 @@ input:focus-visible {
   text-align: center;
 }
 
+.gb-history-empty-title {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.gb-history-empty-sub {
+  margin-top: 5px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .gb-history-list {
   display: flex;
   flex-direction: column;
@@ -2569,6 +2569,27 @@ input:focus-visible {
 
 .gb-history-top > div {
   min-width: 0;
+}
+
+.gb-history-top > .eyebrow {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: var(--surface-wash);
+  color: var(--text-muted);
+  transition:
+    border-color 160ms var(--ease-out-quart),
+    background-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gb-history-top:hover > .eyebrow {
+    border-color: var(--line-strong);
+    background: var(--surface-wash-strong);
+    color: var(--text);
+  }
 }
 
 .gb-history-meta {

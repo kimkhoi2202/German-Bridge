@@ -21,7 +21,10 @@ export default function HistoryPage() {
 
         {archive.length === 0 && (
           <div className="gb-history-card gb-history-empty">
-            <div className="eyebrow">No matches yet</div>
+            <div>
+              <div className="gb-history-empty-title">No completed hands yet</div>
+              <div className="gb-history-empty-sub">Finished hands will appear here.</div>
+            </div>
           </div>
         )}
 
@@ -42,6 +45,7 @@ export default function HistoryPage() {
               const winner = players[m.winnerIdx] ?? players[0];
               const date = new Date(finiteNumber(m.finishedAt, Date.now()));
               const isOpen = openIdx === i;
+              const detailId = `history-detail-${i}`;
               const playerNames = players.map((p, idx) =>
                 sanitizePlayerName(p.name, idx === 0 ? "You" : `Player ${idx + 1}`),
               );
@@ -56,6 +60,8 @@ export default function HistoryPage() {
                   <button
                     type="button"
                     className="gb-history-top"
+                    aria-expanded={isOpen}
+                    aria-controls={detailId}
                     onClick={() => setOpenIdx(isOpen ? null : i)}
                   >
                     <div>
@@ -67,7 +73,7 @@ export default function HistoryPage() {
                         deck{config.decks > 1 ? "s" : ""} · {config.tricksPerHand} tricks
                       </div>
                     </div>
-                    <div className="eyebrow">{isOpen ? "Hide" : "Open"}</div>
+                    <div className="eyebrow">{isOpen ? "Close" : "Details"}</div>
                   </button>
 
                   <div className="gb-history-score-grid">
@@ -94,7 +100,7 @@ export default function HistoryPage() {
                   </div>
 
                   {isOpen && (
-                    <div className="gb-history-detail">
+                    <div id={detailId} className="gb-history-detail">
                       <TallyTable
                         playerNames={playerNames}
                         isYou={players.map((p) => p.isHuman)}

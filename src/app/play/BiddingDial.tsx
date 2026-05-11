@@ -88,9 +88,16 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
             const isOn = v === n;
             return (
               <button
+                type="button"
                 key={n}
                 disabled={isRestricted || !canBid}
                 title={isRestricted ? "Total can't equal tricks" : ""}
+                aria-label={
+                  isRestricted
+                    ? `Bid ${n} unavailable; total cannot equal tricks`
+                    : `Bid ${n}`
+                }
+                aria-pressed={isOn}
                 onClick={() => {
                   if (!isRestricted && canBid) {
                     setV(n);
@@ -100,7 +107,12 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
                   "gb-bid-num" + (isOn ? " on" : "") + (isRestricted ? " restricted" : "")
                 }
               >
-                {n}
+                <span>{n}</span>
+                {isRestricted && (
+                  <span className="gb-bid-tooltip" aria-hidden="true">
+                    Total cannot equal tricks
+                  </span>
+                )}
               </button>
             );
           })}
@@ -113,6 +125,7 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
             </div>
           )}
           <button
+            type="button"
             className="btn brass gb-bid-submit"
             disabled={submitDisabled || !canBid}
             title={submitDisabled ? "Total can't equal tricks" : ""}
