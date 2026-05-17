@@ -24,3 +24,5 @@ scripts/anyscale-submit-*.sh
 wandb/
 __pycache__/
 .pytest_cache/
+.vercel
+Project Assets/
