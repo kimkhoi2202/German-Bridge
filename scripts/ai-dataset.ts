@@ -1,11 +1,20 @@
+import { createWriteStream } from "node:fs";
+import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   examplesToJsonl,
-  generateTrainingDataset,
+  generateTrainingDatasetMatches,
   manifestToJson,
+  type DatasetManifest,
 } from "../src/lib/ai/dataset";
 import { numberArg, parseArgs, policyArg, stringArg } from "./ai-cli";
+
+async function writeAll(stream: NodeJS.WritableStream, chunk: string): Promise<void> {
+  if (!stream.write(chunk)) {
+    await once(stream, "drain");
+  }
+}
 
 async function main() {
   const args = parseArgs();
@@ -15,33 +24,70 @@ async function main() {
   const seed = stringArg(args, "seed", "german-bridge-ai-dataset");
   const out = resolve(stringArg(args, "out", "ai-data/training.jsonl"));
   const manifestOut = resolve(stringArg(args, "manifest", out.replace(/\.jsonl$/u, ".manifest.json")));
+  const progressEvery = numberArg(args, "progress-every", 10);
   const policyByPlayer = policyArg(args, playerCount);
-
-  const dataset = generateTrainingDataset({
-    playerCount,
-    decks: 2,
-    tricksPerHand,
-    matches,
-    seed,
-    policyByPlayer,
-  });
 
   await mkdir(dirname(out), { recursive: true });
   await mkdir(dirname(manifestOut), { recursive: true });
-  await writeFile(out, examplesToJsonl(dataset.examples), "utf8");
-  await writeFile(manifestOut, manifestToJson(dataset.manifest), "utf8");
+
+  const replaySummaries: DatasetManifest["replaySummaries"] = [];
+  let examples = 0;
+  let manifestConfig: DatasetManifest["config"] = {
+    decks: 2,
+    playerCount,
+    tricksPerHand,
+    maxRounds: tricksPerHand,
+  };
+  let policyIds: string[] = [];
+
+  const outStream = createWriteStream(out, { encoding: "utf8" });
+  try {
+    for (const match of generateTrainingDatasetMatches({
+      playerCount,
+      decks: 2,
+      tricksPerHand,
+      matches,
+      seed,
+      policyByPlayer,
+    })) {
+      await writeAll(outStream, examplesToJsonl(match.examples));
+      replaySummaries.push(match.replaySummary);
+      manifestConfig = match.manifestConfig;
+      policyIds = match.policyIds;
+      examples += match.examples.length;
+
+      const matchNumber = match.matchIndex + 1;
+      if (progressEvery > 0 && (matchNumber % progressEvery === 0 || matchNumber === matches)) {
+        console.error(`[dataset] progress match=${matchNumber}/${matches} examples=${examples}`);
+      }
+    }
+  } finally {
+    outStream.end();
+    await once(outStream, "finish");
+  }
+
+  const manifest: DatasetManifest = {
+    seed,
+    matches,
+    examples,
+    config: manifestConfig,
+    policyIds,
+    replaySummaries,
+  };
+
+  await writeFile(manifestOut, manifestToJson(manifest), "utf8");
 
   console.log(
     JSON.stringify(
       {
         out,
         manifest: manifestOut,
-        examples: dataset.examples.length,
+        examples,
         matches,
         players: playerCount,
         decks: 2,
         tricksPerHand,
-        policyIds: dataset.manifest.policyIds,
+        policyIds,
       },
       null,
       2,

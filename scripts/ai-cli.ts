@@ -1,4 +1,8 @@
-import { createRolloutSearchPolicy, type BotPolicy } from "../src/lib/ai/policies";
+import {
+  createChampionSnapshotPolicy,
+  createRolloutSearchPolicy,
+  type BotPolicy,
+} from "../src/lib/ai/policies";
 
 export interface ParsedArgs {
   [key: string]: string | boolean | undefined;
@@ -39,11 +43,36 @@ export function stringArg(args: ParsedArgs, key: string, fallback: string): stri
 export function policyArg(args: ParsedArgs, playerCount: number): BotPolicy[] | undefined {
   const value = stringArg(args, "policy", "baseline");
   if (value === "baseline") return undefined;
-  if (value === "rollout") {
-    const rolloutsPerMove = numberArg(args, "rollouts", 8);
-    const depthTricks = numberArg(args, "depth", 1);
-    const policy = createRolloutSearchPolicy({ rolloutsPerMove, depthTricks });
+  if (value === "champion") {
+    const policy = createChampionSnapshotPolicy("champion-snapshot");
     return Array.from({ length: playerCount }, () => policy);
   }
-  throw new Error(`Unsupported --policy ${value}. Use baseline or rollout.`);
+  if (value === "rollout" || value === "champion-rollout") {
+    const rolloutsPerMove = numberArg(args, "rollouts", 8);
+    const depthTricks = numberArg(args, "depth", 1);
+    const bidRolloutsPerCandidate = numberArg(args, "bid-rollouts", 0);
+    const bidDepthTricks = numberArg(args, "bid-depth", depthTricks);
+    const utilityMode = stringArg(args, "utility", "legacy");
+    if (utilityMode !== "legacy" && utilityMode !== "scored") {
+      throw new Error(`Unsupported --utility ${utilityMode}. Use legacy or scored.`);
+    }
+    const fallback =
+      value === "champion-rollout"
+        ? createChampionSnapshotPolicy("champion-rollout-fallback")
+        : undefined;
+    const policy = createRolloutSearchPolicy({
+      id:
+        bidRolloutsPerCandidate > 0
+          ? `${value}-${rolloutsPerMove}x${depthTricks}-bid-${bidRolloutsPerCandidate}x${bidDepthTricks}-${utilityMode}`
+          : `${value}-${rolloutsPerMove}x${depthTricks}-${utilityMode}`,
+      rolloutsPerMove,
+      depthTricks,
+      bidRolloutsPerCandidate,
+      bidDepthTricks,
+      fallback,
+      utilityMode,
+    });
+    return Array.from({ length: playerCount }, () => policy);
+  }
+  throw new Error(`Unsupported --policy ${value}. Use baseline, champion, rollout, or champion-rollout.`);
 }

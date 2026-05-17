@@ -2,6 +2,7 @@ import { maxTricks, type Card } from "../cards";
 import {
   cumulativeScores,
   initialState,
+  nextRound,
   placeBid,
   playCard,
   settleTrick,
@@ -14,7 +15,7 @@ import {
 import type { Personality } from "../bot";
 import { type BotObservation, createObservation } from "../botObservation";
 import { createSeededRng, type SeededRng } from "./rng";
-import { createBaselinePolicy, type BotPolicy } from "./policies";
+import { createBaselinePolicy, type BotPolicy, type ScoredAction } from "./policies";
 
 export interface TrainingMatchConfig {
   playerCount: number;
@@ -52,6 +53,7 @@ export interface HeadlessDecisionLogEntry {
   policyId: string;
   observation: BotObservation;
   action: number | Card;
+  actionValueTargets?: Array<ScoredAction<number | Card>>;
 }
 
 export interface HeadlessMatchResult {
@@ -110,7 +112,7 @@ export function normalizeTrainingConfig(config: TrainingMatchConfig): MatchConfi
     players,
     decks,
     tricksPerHand: config.tricksPerHand,
-    maxRounds: config.maxRounds ?? 1,
+    maxRounds: config.maxRounds ?? config.tricksPerHand,
   };
 }
 
@@ -135,7 +137,9 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
       const playerIdx = state.bidTurn;
       const observation = createObservation(state, playerIdx);
       const policy = policies[playerIdx];
-      const bid = policy.bid({ state, playerIdx, rng: rng.fork(`bid:${state.round}:${playerIdx}`) });
+      const decisionRng = rng.fork(`bid:${state.round}:${playerIdx}`);
+      const actionValueTargets = policy.scoreBidActions?.({ state, playerIdx, rng: decisionRng });
+      const bid = actionValueTargets?.[0]?.action ?? policy.bid({ state, playerIdx, rng: decisionRng });
       state = placeBid(state, playerIdx, bid);
       bidLog.push({ round: state.round, playerIdx, bid });
       decisionLog.push({
@@ -147,6 +151,7 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
         policyId: policy.id,
         observation,
         action: bid,
+        actionValueTargets,
       });
       continue;
     }
@@ -155,11 +160,13 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
       const playerIdx = state.turnIdx;
       const observation = createObservation(state, playerIdx);
       const policy = policies[playerIdx];
-      const card = policy.play({
+      const decisionRng = rng.fork(`play:${state.round}:${state.trickIdx}:${state.currentTrick.length}:${playerIdx}`);
+      const actionValueTargets = policy.scorePlayActions?.({
         state,
         playerIdx,
-        rng: rng.fork(`play:${state.round}:${state.trickIdx}:${state.currentTrick.length}:${playerIdx}`),
+        rng: decisionRng,
       });
+      const card = actionValueTargets?.[0]?.action ?? policy.play({ state, playerIdx, rng: decisionRng });
       state = playCard(state, playerIdx, card);
       const latest = state.playLog.at(-1);
       if (latest) {
@@ -177,6 +184,7 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
         policyId: policy.id,
         observation,
         action: card,
+        actionValueTargets,
       });
       continue;
     }
@@ -187,12 +195,7 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
     }
 
     if (state.phase === "round-end") {
-      if (state.round >= state.maxRounds) {
-        state = { ...state, phase: "match-end" };
-      } else {
-        const dealerIdx = (state.dealerIdx + 1) % state.players.length;
-        state = startRound({ ...state, dealerIdx }, rng.next);
-      }
+      state = nextRound(state, rng.next);
       continue;
     }
 

@@ -1,12 +1,13 @@
 # German Bridge
 
-A fully playable, single-player-vs-bots implementation of German Bridge, the
-trick-taking card game, built with **Next.js 15 + TypeScript**.
+A fully playable realtime German Bridge table for humans and bots, built with
+**Next.js 15, TypeScript, React 19, and Convex**.
 
 ## Run it
 
 ```bash
 pnpm install
+pnpm exec convex dev
 pnpm dev          # http://localhost:3000
 ```
 
@@ -14,10 +15,13 @@ Other scripts:
 
 ```bash
 pnpm build        # production bundle
-pnpm test         # all 61 unit + integration tests
+pnpm test         # unit, integration, UI, and Convex backend tests
 pnpm typecheck
 pnpm lint
 ```
+
+Local development uses the Convex deployment in `.env.local`. Production uses
+the Convex deployment selected by `CONVEX_DEPLOY_KEY` during Vercel builds.
 
 ## What's playable
 
@@ -25,24 +29,33 @@ pnpm lint
 - **Three knobs**: 3–12 players, 1–4 decks, tricks-per-hand up to `floor((52·D − 1)/P)`.
 - **Multi-deck tie rule**: when two identical cards land in the same trick, the *later-played* one wins.
 - **Last-bidder restriction**: the final bidder cannot pick a number that makes the totals equal the trick count — disabled bid option with tooltip.
-- **Bot AI**: per-seat personality (cautious / mixed / aggressive) overridable from the lobby; global default in Settings.
-- **Persistence**: in-progress match auto-saves to `localStorage` (refresh keeps you exactly where you were); finished matches archive to History.
-- **Themes**: 5 palettes; salon (felt) + card-pad layouts; 3 card-back styles.
-- **Animations**: Framer Motion for trump reveal, card play, trick-winner glow, summary modals.
+- **Realtime rooms**: Convex stores rooms, participants, game state, history, stats, and online presence.
+- **Auth**: username/password auth through Convex Auth.
+- **Bot AI**: per-seat personalities plus a stronger Champion policy and optional GPT bot mode.
+- **Persistence**: in-progress and finished matches are backed by Convex, so refreshes and devices rejoin the same room state.
+- **Themes**: emerald, midnight, and graphite palettes; salon + card-pad layouts; 3 card-back styles.
+- **Animations**: Motion for trump reveal, card play, trick-winner glow, and summary modals.
 
 ## Architecture
 
 ```
 src/
+├── app/
+│   ├── page.tsx         # authenticated room lobby
+│   ├── play/[gameId]/   # live room/table route
+│   ├── history/         # completed/abandoned games from Convex
+│   ├── rules/           # How to play
+│   └── settings/        # theme, layout, defaults
 ├── lib/                 # pure game logic — no React, fully tested
 │   ├── cards.ts         # deck/shoe, ranks, sorting, legal-cards
 │   ├── trick.ts         # trick resolution (incl. second-card-wins)
 │   ├── scoring.ts       # 10 + n² / −d²
-│   ├── bot.ts           # bid + play heuristics by personality
+│   ├── bot.ts           # bid + play heuristics and Champion fallback traces
+│   ├── botObservation.ts
+│   ├── ai/              # Champion snapshot, GPT adapter, dataset/eval helpers
 │   └── game.ts          # state machine: phase transitions
 ├── store/               # Zustand state (persisted)
-│   ├── settings.ts      # visual prefs + lobby defaults
-│   └── match.ts         # active match + archive
+│   └── settings.ts      # visual prefs + local UI fallback
 ├── components/          # presentational components
 │   ├── PlayingCard.tsx
 │   ├── Avatar.tsx
@@ -50,12 +63,16 @@ src/
 │   ├── NumberKnob.tsx
 │   ├── BottomNav.tsx
 │   └── ThemeApplier.tsx
-└── app/                 # Next.js App Router pages
-    ├── page.tsx         # Lobby
-    ├── play/            # Play screen + bidding dial + summary modals
-    ├── history/         # Match archive
-    ├── rules/           # How to play
-    └── settings/        # Theme, layout, defaults
+└── test/                # browser/test setup
+
+convex/
+├── auth.ts              # Convex Auth password provider
+├── rooms.ts             # create/join/start/end rooms
+├── games.ts             # watched game state, moves, bot turns, history
+├── profiles.ts
+├── settings.ts
+├── stats.ts
+└── schema.ts
 ```
 
 Game logic is fully decoupled from React — every state transition is a pure
@@ -87,7 +104,8 @@ src/test/env.test.ts            1 test
 ## AI Training Scaffold
 
 The AI tooling is locked to the first research target: **2 decks, 4-12 players,
-one flipped trump card, variable tricks per hand**.
+one flipped trump card, and a variable max hand size**. A match with `--tricks 8`
+plays scored hands from 1 card through 8 cards.
 
 Generate JSONL decision examples for supervised learning or later RL pipelines:
 

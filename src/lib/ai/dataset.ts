@@ -1,5 +1,5 @@
 import type { BotObservation } from "../botObservation";
-import type { Card } from "../cards";
+import type { Card, Suit } from "../cards";
 import { ranksFromScores } from "./ratings";
 import {
   replayableSummary,
@@ -42,6 +42,28 @@ export interface SerializedObservation {
   legalBids: number[];
   legalCards: SerializedCard[];
   remainingHandCounts: number[];
+  leadIdx: number;
+  turnIdx: number;
+  bidTurn: number;
+  opponentProfiles: Array<{
+    playerIdx: number;
+    currentBid: number | null;
+    currentWon: number;
+    currentBidGap: number;
+    cardsPlayed: number;
+    tricksWon: number;
+    leadCount: number;
+    trumpPlayed: number;
+    offSuitDiscards: number;
+    voidSuits: Record<Suit, boolean>;
+    priorRounds: number;
+    priorBidTotal: number;
+    priorWonTotal: number;
+    priorMadeBidCount: number;
+    priorOverBidCount: number;
+    priorUnderBidCount: number;
+    priorScoreTotal: number;
+  }>;
 }
 
 export interface TrainingExample {
@@ -57,6 +79,10 @@ export interface TrainingExample {
   order: number;
   observation: SerializedObservation;
   action: number | SerializedCard;
+  actionValueTargets?: Array<{
+    action: number | SerializedCard;
+    value: number;
+  }>;
   outcome: {
     finalScore: number;
     finalRank: number;
@@ -86,15 +112,19 @@ export interface GeneratedDataset {
   examples: TrainingExample[];
 }
 
-export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset {
+export interface GeneratedDatasetMatch {
+  matchIndex: number;
+  seed: string;
+  examples: TrainingExample[];
+  manifestConfig: DatasetManifest["config"];
+  policyIds: string[];
+  replaySummary: ReturnType<typeof replayableSummary>;
+}
+
+export function* generateTrainingDatasetMatches(config: DatasetConfig): Generator<GeneratedDatasetMatch> {
   if (!Number.isInteger(config.matches) || config.matches < 1) {
     throw new Error(`Dataset matches must be a positive integer, got ${config.matches}`);
   }
-
-  const examples: TrainingExample[] = [];
-  const replaySummaries: ReturnType<typeof replayableSummary>[] = [];
-  let firstConfig: DatasetManifest["config"] | null = null;
-  let policyIds: string[] = [];
 
   for (let matchIndex = 0; matchIndex < config.matches; matchIndex += 1) {
     const result = runHeadlessMatch({
@@ -102,21 +132,18 @@ export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset
       seed: `${config.seed}:dataset:${matchIndex}`,
     });
     const ranks = ranksFromScores(result.cumulative);
-    replaySummaries.push(replayableSummary(result));
-    firstConfig ??= {
+    const manifestConfig: DatasetManifest["config"] = {
       decks: 2,
       playerCount: result.config.playerCount,
       tricksPerHand: result.config.tricksPerHand,
       maxRounds: result.config.maxRounds,
     };
-    policyIds = result.policyIds;
-
-    result.decisions.forEach((decision, decisionIndex) => {
+    const examples = result.decisions.map((decision, decisionIndex) => {
       const playerIdx = decision.playerIdx;
-      const lastRound = result.rounds.at(-1);
-      const bid = lastRound?.bids[playerIdx] ?? result.finalState.bids[playerIdx] ?? 0;
-      const won = lastRound?.won[playerIdx] ?? result.finalState.won[playerIdx] ?? 0;
-      examples.push({
+      const decisionRound = result.rounds.find((round) => round.round === decision.round) ?? result.rounds.at(-1);
+      const bid = decisionRound?.bids[playerIdx] ?? result.finalState.bids[playerIdx] ?? 0;
+      const won = decisionRound?.won[playerIdx] ?? result.finalState.won[playerIdx] ?? 0;
+      return {
         id: `${result.seed}:${decisionIndex}`,
         matchIndex,
         decisionIndex,
@@ -129,6 +156,10 @@ export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset
         order: decision.order,
         observation: serializeObservation(decision.observation),
         action: typeof decision.action === "number" ? decision.action : serializeCard(decision.action),
+        actionValueTargets: decision.actionValueTargets?.map((target) => ({
+          action: typeof target.action === "number" ? target.action : serializeCard(target.action),
+          value: target.score,
+        })),
         outcome: {
           finalScore: result.cumulative[playerIdx],
           finalRank: ranks[playerIdx],
@@ -137,8 +168,30 @@ export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset
           won,
           madeBid: bid === won,
         },
-      });
+      };
     });
+    yield {
+      matchIndex,
+      seed: result.seed,
+      examples,
+      manifestConfig,
+      policyIds: result.policyIds,
+      replaySummary: replayableSummary(result),
+    };
+  }
+}
+
+export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset {
+  const examples: TrainingExample[] = [];
+  const replaySummaries: ReturnType<typeof replayableSummary>[] = [];
+  let firstConfig: DatasetManifest["config"] | null = null;
+  let policyIds: string[] = [];
+
+  for (const match of generateTrainingDatasetMatches(config)) {
+    examples.push(...match.examples);
+    replaySummaries.push(match.replaySummary);
+    firstConfig ??= match.manifestConfig;
+    policyIds = match.policyIds;
   }
 
   return {
@@ -150,7 +203,7 @@ export function generateTrainingDataset(config: DatasetConfig): GeneratedDataset
         decks: 2,
         playerCount: config.playerCount,
         tricksPerHand: config.tricksPerHand,
-        maxRounds: config.maxRounds ?? 1,
+        maxRounds: config.maxRounds ?? config.tricksPerHand,
       },
       policyIds,
       replaySummaries,
@@ -185,6 +238,13 @@ export function serializeObservation(observation: BotObservation): SerializedObs
     legalBids: observation.legalBids,
     legalCards: observation.legalCards.map(serializeCard),
     remainingHandCounts: observation.remainingHandCounts,
+    leadIdx: observation.leadIdx,
+    turnIdx: observation.turnIdx,
+    bidTurn: observation.bidTurn,
+    opponentProfiles: observation.opponentProfiles.map((profile) => ({
+      ...profile,
+      voidSuits: { ...profile.voidSuits },
+    })),
   };
 }
 
