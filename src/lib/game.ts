@@ -47,6 +47,7 @@ export interface GameState {
   // ── Match config ────────────────────────────────────────
   players: Player[];
   decks: number;
+  /** Maximum hand size. A match plays scored hands from 1 card up to this value. */
   tricksPerHand: number;
   maxRounds: number;
 
@@ -74,8 +75,15 @@ export interface GameState {
 export interface MatchConfig {
   players: Player[];
   decks: number;
+  /** Maximum hand size. A match plays scored hands from 1 card up to this value. */
   tricksPerHand: number;
   maxRounds: number;
+}
+
+export function tricksForRound(round: number, maxTricksPerHand: number): number {
+  const normalizedRound = Math.max(1, Math.trunc(round));
+  const normalizedMax = Math.max(1, Math.trunc(maxTricksPerHand));
+  return Math.min(normalizedRound, normalizedMax);
 }
 
 /** Build initial game state in the `lobby` phase. */
@@ -84,7 +92,7 @@ export function initialState(config: MatchConfig): GameState {
     players: config.players,
     decks: config.decks,
     tricksPerHand: config.tricksPerHand,
-    maxRounds: config.maxRounds,
+    maxRounds: Math.max(1, Math.min(config.maxRounds, config.tricksPerHand)),
     phase: "lobby",
     round: 0,
     dealerIdx: 0,
@@ -102,6 +110,12 @@ export function initialState(config: MatchConfig): GameState {
     turnIdx: 0,
     trickWinner: null,
   };
+}
+
+function randomSeatIndex(playerCount: number, rng: () => number): number {
+  const raw = rng();
+  const normalized = Number.isFinite(raw) ? raw : 0;
+  return Math.max(0, Math.min(playerCount - 1, Math.floor(normalized * playerCount)));
 }
 
 /** Compute the bid value the last bidder cannot pick (or null if any is OK). */
@@ -132,10 +146,15 @@ export function startRound(
       `Invalid tricksPerHand=${tricksPerHand} for players=${players.length}, decks=${decks} (max ${max}).`,
     );
   }
+  const nextRoundNumber = state.round + 1;
+  const tricksThisHand = tricksForRound(nextRoundNumber, tricksPerHand);
+  const dealerIdx = state.round === 0
+    ? randomSeatIndex(players.length, rng)
+    : state.dealerIdx;
 
   const shoe = shuffle(buildShoe(decks), rng);
   const hands: Card[][] = players.map(() => []);
-  for (let r = 0; r < tricksPerHand; r++) {
+  for (let r = 0; r < tricksThisHand; r++) {
     for (let p = 0; p < players.length; p++) {
       const c = shoe.pop();
       if (!c) throw new Error("Shoe exhausted while dealing");
@@ -145,16 +164,16 @@ export function startRound(
   const trumpCard = shoe.pop();
   if (!trumpCard) throw new Error("No card available for trump flip");
 
-  const dealerIdx = state.dealerIdx;
   const lead = (dealerIdx + 1) % players.length;
 
   return {
     ...state,
     phase: "dealing",
-    round: state.round + 1,
+    round: nextRoundNumber,
+    dealerIdx,
     hands,
     trumpCard,
-    tricksTotal: tricksPerHand,
+    tricksTotal: tricksThisHand,
     bids: Array(players.length).fill(null),
     bidTurn: lead,
     won: Array(players.length).fill(0),
@@ -283,7 +302,15 @@ export function settleTrick(state: GameState): GameState {
 
   const nextTrickIdx = state.trickIdx + 1;
   if (nextTrickIdx >= state.tricksTotal) {
-    return finalizeRound({ ...state, won });
+    return finalizeRound({
+      ...state,
+      won,
+      trickIdx: nextTrickIdx,
+      currentTrick: [],
+      trickWinner: null,
+      leadIdx: winner,
+      turnIdx: winner,
+    });
   }
 
   return {
@@ -313,7 +340,7 @@ function finalizeRound(state: GameState): GameState {
 }
 
 /** Advance to the next round, or move to match-end if done. */
-export function nextRound(state: GameState): GameState {
+export function nextRound(state: GameState, rng: () => number = Math.random): GameState {
   if (state.phase !== "round-end") {
     throw new Error("nextRound: not at round-end");
   }
@@ -321,7 +348,7 @@ export function nextRound(state: GameState): GameState {
     return { ...state, phase: "match-end" };
   }
   const nextDealer = (state.dealerIdx + 1) % state.players.length;
-  return startRound({ ...state, dealerIdx: nextDealer });
+  return startRound({ ...state, dealerIdx: nextDealer }, rng);
 }
 
 /** Cumulative score per player across all rounds played so far. */

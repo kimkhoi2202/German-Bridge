@@ -27,6 +27,8 @@ describe("hardening helpers", () => {
 
   it("sanitizes bot personalities and numeric arrays", () => {
     expect(sanitizePersonality("wild")).toBe("mixed");
+    expect(sanitizePersonality("champion")).toBe("champion");
+    expect(sanitizePersonality("gpt")).toBe("gpt");
     expect(sanitizeBotOverrides(["aggressive", "wild", null], 3)).toEqual([
       "aggressive",
       null,

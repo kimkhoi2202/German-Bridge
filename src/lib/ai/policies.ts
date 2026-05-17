@@ -1,12 +1,18 @@
-import { chooseBid, chooseCard } from "../bot";
+import { chooseBid, chooseCard, handEquity } from "../bot";
 import { createObservation } from "../botObservation";
 import { buildShoe, rankVal, type Card, type Suit } from "../cards";
+import {
+  championSnapshotId,
+  scoreChampionBidActions,
+  scoreChampionCardActions,
+} from "./championSnapshot";
 import {
   placeBid,
   playCard,
   settleTrick,
   type GameState,
 } from "../game";
+import { score as scoreRound } from "../scoring";
 import type { SeededRng } from "./rng";
 
 export interface BidContext {
@@ -25,6 +31,13 @@ export interface BotPolicy {
   readonly id: string;
   bid: (context: BidContext) => number;
   play: (context: PlayContext) => Card;
+  scoreBidActions?: (context: BidContext) => ScoredAction<number>[];
+  scorePlayActions?: (context: PlayContext) => ScoredAction<Card>[];
+}
+
+export interface ScoredAction<TAction> {
+  action: TAction;
+  score: number;
 }
 
 export function createBaselinePolicy(id = "baseline"): BotPolicy {
@@ -51,50 +64,142 @@ export function createRandomLegalPolicy(id = "random-legal"): BotPolicy {
   };
 }
 
+export function createChampionSnapshotPolicy(id = `champion:${championSnapshotId}`): BotPolicy {
+  const fallback = createBaselinePolicy("champion-fallback");
+  return {
+    id,
+    bid({ state, playerIdx, rng }) {
+      const observation = createObservation(state, playerIdx);
+      const best = scoreChampionBidActions(observation)[0];
+      return best?.bid ?? fallback.bid({ state, playerIdx, rng });
+    },
+    play({ state, playerIdx, rng }) {
+      const observation = createObservation(state, playerIdx);
+      const best = scoreChampionCardActions(observation)[0];
+      return best?.card ?? fallback.play({ state, playerIdx, rng });
+    },
+  };
+}
+
 export interface RolloutSearchOptions {
   id?: string;
   rolloutsPerMove?: number;
   depthTricks?: number;
+  bidRolloutsPerCandidate?: number;
+  bidDepthTricks?: number;
   fallback?: BotPolicy;
+  utilityMode?: "legacy" | "scored";
 }
 
 export function createRolloutSearchPolicy(options: RolloutSearchOptions = {}): BotPolicy {
-  const rolloutsPerMove = options.rolloutsPerMove ?? 16;
-  const depthTricks = options.depthTricks ?? 2;
-  const fallback = options.fallback ?? createBaselinePolicy("rollout-fallback");
+  const config = normalizeRolloutSearchOptions(options);
 
   return {
-    id: options.id ?? `rollout-${rolloutsPerMove}x${depthTricks}`,
+    id: options.id ?? `rollout-${config.rolloutsPerMove}x${config.depthTricks}`,
     bid(context) {
-      return fallback.bid(context);
+      return scoreRolloutBidActions(context, config)[0]?.action ?? config.fallback.bid(context);
     },
-    play({ state, playerIdx, rng }) {
-      const observation = createObservation(state, playerIdx);
-      const candidates = observation.legalCards;
-      if (candidates.length <= 1 || rolloutsPerMove <= 0 || depthTricks <= 0) {
-        return fallback.play({ state, playerIdx, rng });
-      }
-
-      let best = candidates[0];
-      let bestScore = -Infinity;
-      for (const card of candidates) {
-        let total = 0;
-        for (let i = 0; i < rolloutsPerMove; i++) {
-          const rolloutRng = rng.fork(`${state.round}:${state.trickIdx}:${playerIdx}:${card.key}:${i}`);
-          const sampled = sampleBeliefState(state, playerIdx, rolloutRng);
-          const after = playCard(sampled, playerIdx, card);
-          const finished = rolloutForward(after, playerIdx, rolloutRng, depthTricks, fallback);
-          total += utilityForPlayer(finished, playerIdx);
-        }
-        const score = total / rolloutsPerMove;
-        if (score > bestScore || (score === bestScore && cardStrength(card) < cardStrength(best))) {
-          best = card;
-          bestScore = score;
-        }
-      }
-      return best;
+    play(context) {
+      return scoreRolloutCardActions(context, config)[0]?.action ?? config.fallback.play(context);
+    },
+    scoreBidActions(context) {
+      return scoreRolloutBidActions(context, config);
+    },
+    scorePlayActions(context) {
+      return scoreRolloutCardActions(context, config);
     },
   };
+}
+
+interface NormalizedRolloutSearchOptions {
+  rolloutsPerMove: number;
+  depthTricks: number;
+  bidRolloutsPerCandidate: number;
+  bidDepthTricks: number;
+  fallback: BotPolicy;
+  utilityMode: "legacy" | "scored";
+}
+
+function normalizeRolloutSearchOptions(options: RolloutSearchOptions): NormalizedRolloutSearchOptions {
+  return {
+    rolloutsPerMove: options.rolloutsPerMove ?? 16,
+    depthTricks: options.depthTricks ?? 2,
+    bidRolloutsPerCandidate: options.bidRolloutsPerCandidate ?? 0,
+    bidDepthTricks: options.bidDepthTricks ?? Number.POSITIVE_INFINITY,
+    fallback: options.fallback ?? createBaselinePolicy("rollout-fallback"),
+    utilityMode: options.utilityMode ?? "legacy",
+  };
+}
+
+export function scoreRolloutBidActions(
+  { state, playerIdx, rng }: BidContext,
+  options: RolloutSearchOptions = {},
+): ScoredAction<number>[] {
+  const config = normalizeRolloutSearchOptions(options);
+  const observation = createObservation(state, playerIdx);
+  const candidates = observation.legalBids;
+  if (candidates.length <= 1 || config.bidRolloutsPerCandidate <= 0) {
+    return [];
+  }
+
+  const fallbackBid = config.fallback.bid({
+    state,
+    playerIdx,
+    rng: rng.fork(`bid-fallback:${state.round}:${playerIdx}`),
+  });
+  const scored = candidates.map((bid) => {
+    let total = 0;
+    for (let i = 0; i < config.bidRolloutsPerCandidate; i++) {
+      const rolloutRng = rng.fork(`bid:${state.round}:${playerIdx}:${bid}:${i}`);
+      const sampled = sampleBeliefState(state, playerIdx, rolloutRng);
+      const afterBid = placeBid(sampled, playerIdx, bid);
+      const finished = rolloutBiddingAndPlay(
+        afterBid,
+        playerIdx,
+        rolloutRng,
+        config.bidDepthTricks,
+        config.fallback,
+      );
+      total += utilityForPlayer(finished, playerIdx, config.utilityMode);
+    }
+    return { action: bid, score: total / config.bidRolloutsPerCandidate };
+  });
+
+  return scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (bidTieBreaksBetter(a.action, b.action, fallbackBid)) return -1;
+    if (bidTieBreaksBetter(b.action, a.action, fallbackBid)) return 1;
+    return a.action - b.action;
+  });
+}
+
+export function scoreRolloutCardActions(
+  { state, playerIdx, rng }: PlayContext,
+  options: RolloutSearchOptions = {},
+): ScoredAction<Card>[] {
+  const config = normalizeRolloutSearchOptions(options);
+  const observation = createObservation(state, playerIdx);
+  const candidates = observation.legalCards;
+  if (candidates.length <= 1 || config.rolloutsPerMove <= 0 || config.depthTricks <= 0) {
+    return [];
+  }
+
+  const scored = candidates.map((card) => {
+    let total = 0;
+    for (let i = 0; i < config.rolloutsPerMove; i++) {
+      const rolloutRng = rng.fork(`${state.round}:${state.trickIdx}:${playerIdx}:${card.key}:${i}`);
+      const sampled = sampleBeliefState(state, playerIdx, rolloutRng);
+      const after = playCard(sampled, playerIdx, card);
+      const finished = rolloutForward(after, playerIdx, rolloutRng, config.depthTricks, config.fallback);
+      total += utilityForPlayer(finished, playerIdx, config.utilityMode);
+    }
+    return { action: card, score: total / config.rolloutsPerMove };
+  });
+
+  return scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return cardStrength(a.action) - cardStrength(b.action);
+  });
 }
 
 function sampleBeliefState(state: GameState, playerIdx: number, rng: SeededRng): GameState {
@@ -178,18 +283,76 @@ function rolloutForward(
   return current;
 }
 
-function utilityForPlayer(state: GameState, playerIdx: number): number {
+function rolloutBiddingAndPlay(
+  state: GameState,
+  targetIdx: number,
+  rng: SeededRng,
+  depthTricks: number,
+  policy: BotPolicy,
+): GameState {
+  let current = state;
+
+  while (current.phase === "bidding") {
+    const turn = current.bidTurn;
+    const bid = policy.bid({
+      state: current,
+      playerIdx: turn,
+      rng: rng.fork(`b${turn}:${current.round}:${current.bids.filter((b) => b != null).length}`),
+    });
+    current = placeBid(current, turn, bid);
+  }
+
+  if (current.phase !== "playing") return current;
+  return rolloutForward(current, targetIdx, rng, depthTricks, policy);
+}
+
+function utilityForPlayer(
+  state: GameState,
+  playerIdx: number,
+  utilityMode: "legacy" | "scored",
+): number {
   const bid = state.bids[playerIdx] ?? 0;
   const won = state.won[playerIdx];
-  const remaining = state.tricksTotal - state.trickIdx;
-  const need = bid - won;
-  const made = need === 0 ? 12 : -Math.abs(need) * 2;
-  const possible = need > 0 && need <= remaining ? 2 : need <= 0 ? 1 : -3;
-  return made + possible;
+  const remaining = Math.max(0, state.tricksTotal - state.trickIdx);
+  if (utilityMode === "legacy") {
+    const need = bid - won;
+    const made = need === 0 ? 12 : -Math.abs(need) * 2;
+    const possible = need > 0 && need <= remaining ? 2 : need <= 0 ? 1 : -3;
+    return made + possible;
+  }
+
+  if (state.phase === "round-end" || state.phase === "match-end" || remaining === 0) {
+    return scoreRound(bid, won);
+  }
+
+  const trumpSuit = state.trumpCard?.s ?? null;
+  const projectedWon = Math.max(
+    won,
+    Math.min(won + remaining, won + handEquity(state.hands[playerIdx] ?? [], trumpSuit)),
+  );
+  const roundedProjection = Math.max(won, Math.min(won + remaining, Math.round(projectedWon)));
+  const exactStillPossible = bid >= won && bid <= won + remaining;
+  const distance = Math.abs(bid - projectedWon);
+  const currentMissDistance =
+    bid < won ? won - bid : bid > won + remaining ? bid - (won + remaining) : 0;
+
+  return (
+    scoreRound(bid, roundedProjection) -
+    distance * 0.75 -
+    currentMissDistance * currentMissDistance * 2 +
+    (exactStillPossible ? 2 : -4)
+  );
 }
 
 function cardStrength(card: Card): number {
   return rankVal(card.r) + card.d * 0.01;
+}
+
+function bidTieBreaksBetter(candidate: number, current: number, fallbackBid: number): boolean {
+  const candidateDistance = Math.abs(candidate - fallbackBid);
+  const currentDistance = Math.abs(current - fallbackBid);
+  if (candidateDistance !== currentDistance) return candidateDistance < currentDistance;
+  return candidate < current;
 }
 
 export function bidInTurn(state: GameState, policy: BotPolicy, rng: SeededRng): GameState {

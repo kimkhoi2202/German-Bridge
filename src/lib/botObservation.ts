@@ -15,6 +15,26 @@ export interface PublicPlayer {
   personality: Player["personality"];
 }
 
+export interface OpponentProfile {
+  playerIdx: number;
+  currentBid: number | null;
+  currentWon: number;
+  currentBidGap: number;
+  cardsPlayed: number;
+  tricksWon: number;
+  leadCount: number;
+  trumpPlayed: number;
+  offSuitDiscards: number;
+  voidSuits: Record<Suit, boolean>;
+  priorRounds: number;
+  priorBidTotal: number;
+  priorWonTotal: number;
+  priorMadeBidCount: number;
+  priorOverBidCount: number;
+  priorUnderBidCount: number;
+  priorScoreTotal: number;
+}
+
 export interface BotObservation {
   playerIdx: number;
   playerCount: number;
@@ -36,6 +56,7 @@ export interface BotObservation {
   legalBids: number[];
   legalCards: Card[];
   remainingHandCounts: number[];
+  opponentProfiles: OpponentProfile[];
 }
 
 export function legalBidsFor(state: GameState, playerIdx: number): number[] {
@@ -86,5 +107,75 @@ export function createObservation(state: GameState, playerIdx: number): BotObser
     legalBids: legalBidsFor(state, playerIdx),
     legalCards: legalCardsFor(state, playerIdx),
     remainingHandCounts: state.hands.map((hand) => hand.length),
+    opponentProfiles: buildOpponentProfiles(state),
   };
+}
+
+function buildOpponentProfiles(state: GameState): OpponentProfile[] {
+  const leadSuitByTrick = new Map<number, Suit>();
+  for (const entry of state.playLog) {
+    if (entry.order === 1) {
+      leadSuitByTrick.set(entry.trick, entry.card.s);
+    }
+  }
+
+  return state.players.map((_, playerIdx) => {
+    const bid = state.bids[playerIdx] ?? null;
+    const won = state.won[playerIdx] ?? 0;
+    const played = state.playLog.filter((entry) => entry.playerIdx === playerIdx);
+    const voidSuits: Record<Suit, boolean> = { s: false, h: false, d: false, c: false };
+    let offSuitDiscards = 0;
+
+    for (const entry of played) {
+      const leadSuit = leadSuitByTrick.get(entry.trick);
+      if (leadSuit && entry.order > 1 && entry.card.s !== leadSuit) {
+        offSuitDiscards += 1;
+        voidSuits[leadSuit] = true;
+      }
+    }
+
+    const prior = state.history.reduce(
+      (acc, round) => {
+        const priorBid = round.bids[playerIdx] ?? 0;
+        const priorWon = round.won[playerIdx] ?? 0;
+        acc.rounds += 1;
+        acc.bidTotal += priorBid;
+        acc.wonTotal += priorWon;
+        acc.scoreTotal += round.scores[playerIdx] ?? 0;
+        if (priorBid === priorWon) acc.madeBid += 1;
+        if (priorBid > priorWon) acc.overBid += 1;
+        if (priorBid < priorWon) acc.underBid += 1;
+        return acc;
+      },
+      {
+        rounds: 0,
+        bidTotal: 0,
+        wonTotal: 0,
+        madeBid: 0,
+        overBid: 0,
+        underBid: 0,
+        scoreTotal: 0,
+      },
+    );
+
+    return {
+      playerIdx,
+      currentBid: bid,
+      currentWon: won,
+      currentBidGap: bid == null ? 0 : bid - won,
+      cardsPlayed: played.length,
+      tricksWon: played.filter((entry) => entry.winner === true).length,
+      leadCount: played.filter((entry) => entry.order === 1).length,
+      trumpPlayed: state.trumpCard ? played.filter((entry) => entry.card.s === state.trumpCard?.s).length : 0,
+      offSuitDiscards,
+      voidSuits,
+      priorRounds: prior.rounds,
+      priorBidTotal: prior.bidTotal,
+      priorWonTotal: prior.wonTotal,
+      priorMadeBidCount: prior.madeBid,
+      priorOverBidCount: prior.overBid,
+      priorUnderBidCount: prior.underBid,
+      priorScoreTotal: prior.scoreTotal,
+    };
+  });
 }

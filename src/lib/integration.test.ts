@@ -72,14 +72,14 @@ function autoTurn(state: GameState): GameState {
   return state;
 }
 
-describe("integration: drive a full hand with all bots", () => {
+describe("integration: drive a full hand ladder with all bots", () => {
   it("reaches match-end with a winner and consistent score totals", () => {
     const players = mkBots(4);
     let s: GameState = initialState({
       players,
       decks: 1,
       tricksPerHand: 5,
-      maxRounds: 1,
+      maxRounds: 5,
     });
     s = startRound(s, seededRng(42));
 
@@ -88,11 +88,10 @@ describe("integration: drive a full hand with all bots", () => {
       s = autoTurn(s);
     }
     expect(s.phase).toBe("match-end");
-    expect(s.history).toHaveLength(1);
+    expect(s.history).toHaveLength(5);
 
-    // The hand dealt 5 tricks.
     s.history.forEach((r) => {
-      expect(r.won.reduce((a, b) => a + b, 0)).toBe(5);
+      expect(r.won.reduce((a, b) => a + b, 0)).toBe(r.round);
       expect(r.bids).toHaveLength(4);
       expect(r.scores).toHaveLength(4);
     });
@@ -106,13 +105,13 @@ describe("integration: drive a full hand with all bots", () => {
 });
 
 describe("integration: stress test — high decks + many players", () => {
-  it("handles 12 players with 4 decks for one hand without errors", () => {
+  it("handles 12 players with 4 decks for a hand ladder without errors", () => {
     const players = mkBots(12);
     let s: GameState = initialState({
       players,
       decks: 4,
       tricksPerHand: 8,
-      maxRounds: 1,
+      maxRounds: 8,
     });
     s = startRound(s, seededRng(99));
 
@@ -121,25 +120,25 @@ describe("integration: stress test — high decks + many players", () => {
       s = autoTurn(s);
     }
     expect(s.phase).toBe("match-end");
-    expect(s.history).toHaveLength(1);
+    expect(s.history).toHaveLength(8);
     s.history.forEach((r) => {
-      expect(r.won.reduce((a, b) => a + b, 0)).toBe(8);
+      expect(r.won.reduce((a, b) => a + b, 0)).toBe(r.round);
     });
   });
 });
 
 describe("integration: 3 players, 1 deck, max-tricks (17)", () => {
-  it("plays a 17-trick hand without exhausting the shoe", () => {
+  it("plays a 1-17 hand ladder without exhausting the shoe", () => {
     const players = mkBots(3);
     let s: GameState = initialState({
       players,
       decks: 1,
       tricksPerHand: 17,
-      maxRounds: 1,
+      maxRounds: 17,
     });
     s = startRound(s, seededRng(7));
-    expect(s.tricksTotal).toBe(17);
-    s.hands.forEach((h) => expect(h).toHaveLength(17));
+    expect(s.tricksTotal).toBe(1);
+    s.hands.forEach((h) => expect(h).toHaveLength(1));
     expect(s.trumpCard).not.toBeNull();
 
     let safety = 0;
@@ -147,6 +146,7 @@ describe("integration: 3 players, 1 deck, max-tricks (17)", () => {
       s = autoTurn(s);
     }
     expect(s.phase).toBe("match-end");
-    expect(s.history[0].won.reduce((a, b) => a + b, 0)).toBe(17);
+    expect(s.history).toHaveLength(17);
+    expect(s.history.at(-1)?.won.reduce((a, b) => a + b, 0)).toBe(17);
   });
 });

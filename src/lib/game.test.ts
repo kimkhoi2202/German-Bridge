@@ -29,11 +29,23 @@ function seededRng(seed: number) {
   };
 }
 
+function rngWithFirst(first: number, seed = 123) {
+  const rest = seededRng(seed);
+  let usedFirst = false;
+  return () => {
+    if (!usedFirst) {
+      usedFirst = true;
+      return first;
+    }
+    return rest();
+  };
+}
+
 const baseConfig = {
   players: mkPlayers(4),
   decks: 1,
   tricksPerHand: 3,
-  maxRounds: 2,
+  maxRounds: 3,
 };
 
 describe("initialState", () => {
@@ -59,15 +71,35 @@ describe("lastBidderRestriction", () => {
 });
 
 describe("startRound", () => {
-  it("deals tricksPerHand cards to each player + flips trump", () => {
+  it("starts the hand ladder at one card and flips trump", () => {
     const s0 = initialState(baseConfig);
     const s1 = startRound(s0, seededRng(1));
     expect(s1.phase).toBe("dealing");
     expect(s1.hands).toHaveLength(4);
-    s1.hands.forEach((h) => expect(h).toHaveLength(3));
+    s1.hands.forEach((h) => expect(h).toHaveLength(1));
     expect(s1.trumpCard).not.toBeNull();
-    expect(s1.tricksTotal).toBe(3);
+    expect(s1.tricksTotal).toBe(1);
     expect(s1.round).toBe(1);
+  });
+
+  it("randomizes the initial dealer and derives the first bidder from that dealer", () => {
+    const s0 = initialState(baseConfig);
+    const s1 = startRound(s0, rngWithFirst(0.75));
+    expect(s1.dealerIdx).toBe(3);
+    expect(s1.bidTurn).toBe(0);
+    expect(s1.leadIdx).toBe(0);
+    expect(s1.turnIdx).toBe(0);
+  });
+
+  it("rotates the dealer after the randomized first round", () => {
+    const s0 = initialState(baseConfig);
+    const firstRound = startRound(s0, rngWithFirst(0.25));
+    expect(firstRound.dealerIdx).toBe(1);
+    expect(firstRound.bidTurn).toBe(2);
+
+    const secondRound = nextRound({ ...firstRound, phase: "round-end" }, seededRng(9));
+    expect(secondRound.dealerIdx).toBe(2);
+    expect(secondRound.bidTurn).toBe(3);
   });
 
   it("throws if tricksPerHand exceeds the deck capacity", () => {
@@ -85,10 +117,10 @@ describe("placeBid", () => {
     const order = [s.bidTurn];
     for (let i = 1; i < 4; i++) order.push((order[i - 1] + 1) % 4);
 
-    s = placeBid(s, order[0], 1);
-    s = placeBid(s, order[1], 1);
+    s = placeBid(s, order[0], 0);
+    s = placeBid(s, order[1], 0);
     s = placeBid(s, order[2], 0);
-    // Last bidder cannot pick 1 (since 1+1+0+1 = 3 = tricksTotal)
+    // Last bidder cannot pick 1 (since 0+0+0+1 = 1 = tricksTotal)
     expect(() => placeBid(s, order[3], 1)).toThrow();
     // But 0 is fine
     s = placeBid(s, order[3], 0);
@@ -104,7 +136,7 @@ describe("placeBid", () => {
     s = placeBid(s, order[0], 0);
     s = placeBid(s, order[1], 0);
     s = placeBid(s, order[2], 0);
-    s = placeBid(s, order[3], 1);
+    s = placeBid(s, order[3], 0);
     expect(s.phase).toBe("playing");
   });
 
@@ -165,12 +197,13 @@ describe("playCard / settleTrick / round flow", () => {
     // All hands are empty
     s.hands.forEach((h) => expect(h).toHaveLength(0));
     expect(s.playLog).toHaveLength(s.tricksTotal * s.players.length);
-    expect(s.playLog.at(-1)?.winner).toBe(true);
+    expect(s.playLog.filter((entry) => entry.trick === s.tricksTotal && entry.winner)).toHaveLength(1);
+    expect(s.trickIdx).toBe(s.tricksTotal);
   });
 
   it("rejects revoking (not following suit when able)", () => {
     const s0 = initialState({ ...baseConfig, players: mkPlayers(2), tricksPerHand: 3 });
-    let s = startRound(s0, seededRng(6));
+    let s = startRound({ ...s0, round: 2 }, seededRng(6));
     s = bidEveryone(s, [1, 1]);
 
     // Force a known lead so we can attempt a revoke
@@ -227,6 +260,8 @@ describe("nextRound + cumulativeScores", () => {
     const after = nextRound(s);
     expect(after.phase).toBe("dealing");
     expect(after.round).toBe(2);
+    expect(after.tricksTotal).toBe(2);
+    after.hands.forEach((hand) => expect(hand).toHaveLength(2));
     expect(after.dealerIdx).toBe((dealerBefore + 1) % 3);
 
     const cum = cumulativeScores(s);
