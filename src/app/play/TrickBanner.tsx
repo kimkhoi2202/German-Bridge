@@ -1,9 +1,11 @@
 "use client";
 
 import { useMatch } from "@/store/match";
+import type { GameState } from "@/lib/game";
 
-export function TrickBanner() {
-  const state = useMatch((s) => s.state);
+export function TrickBanner({ state: stateProp }: { state?: GameState | null }) {
+  const localState = useMatch((s) => s.state);
+  const state = stateProp ?? localState;
   const winner =
     state && state.phase === "trick-end" && state.trickWinner != null
       ? state.players[state.trickWinner]

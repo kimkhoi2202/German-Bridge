@@ -1,61 +1,144 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
-import { LayoutGroup, motion } from "motion/react";
-import { useSettings } from "@/store/settings";
-import { useMatch } from "@/store/match";
-import { Icon } from "@/components/Icon";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useMutation, useQuery } from "convex/react";
+import { useEffect, useState } from "react";
+import { api } from "../../../convex/_generated/api";
+import { AuthGate } from "@/components/AuthGate";
+import { Button } from "@/components/base/buttons/button";
+import { useBoundedNumberInput } from "@/components/useBoundedNumberInput";
 import type { Personality } from "@/lib/bot";
-import { MAX_DECKS } from "@/lib/cards";
-import { layoutTransition, stateTransition } from "@/lib/uiMotion";
+import { MAX_DECKS, maxTricks } from "@/lib/cards";
+import { useSettings, type CardBack, type TableLayout, type Theme } from "@/store/settings";
 import { useGameViewportLock } from "../useGameViewportLock";
 
-const THEMES = [
+type SettingsDraft = {
+  theme: Theme;
+  cardBack: CardBack;
+  layout: TableLayout;
+  showTrumpHints: boolean;
+  animations: boolean;
+  defaultPlayers: number;
+  defaultDecks: number;
+  defaultTricksPerHand: number;
+  defaultBotMood: Personality;
+};
+
+function toSettingsDraft(settings: SettingsDraft): SettingsDraft {
+  return {
+    theme: settings.theme,
+    cardBack: settings.cardBack,
+    layout: settings.layout,
+    showTrumpHints: settings.showTrumpHints,
+    animations: settings.animations,
+    defaultPlayers: settings.defaultPlayers,
+    defaultDecks: settings.defaultDecks,
+    defaultTricksPerHand: settings.defaultTricksPerHand,
+    defaultBotMood: settings.defaultBotMood,
+  };
+}
+
+const THEMES: { id: Theme; label: string }[] = [
   { id: "emerald", label: "Emerald" },
   { id: "midnight", label: "Midnight" },
   { id: "graphite", label: "Graphite" },
-] as const;
-
-const CARD_BACKS = [
+];
+const CARD_BACKS: { id: CardBack; label: string }[] = [
   { id: "classic", label: "Classic crosshatch" },
   { id: "lattice", label: "Brass lattice" },
   { id: "monogram", label: "Monogram" },
-] as const;
-
-const LAYOUTS = [
+];
+const LAYOUTS: { id: TableLayout; label: string }[] = [
   { id: "salon", label: "Salon" },
   { id: "pad", label: "Card-pad" },
-] as const;
-
+];
 const MOODS: { id: Personality; label: string }[] = [
   { id: "cautious", label: "Cautious" },
   { id: "mixed", label: "Mixed" },
   { id: "aggressive", label: "Aggressive" },
-];
-
-const SETTINGS_NAV = [
-  { href: "#profile", label: "Profile", icon: "user" },
-  { href: "#look", label: "Look", icon: "palette" },
-  { href: "#bots", label: "Bots", icon: "bot" },
-  { href: "#defaults", label: "Defaults", icon: "sliders" },
-  { href: "#danger", label: "Danger zone", icon: "warning", danger: true },
+  { id: "champion", label: "Champion" },
+  { id: "gpt", label: "GPT" },
 ];
 
 export default function SettingsPage() {
-  const s = useSettings();
-  const { defaultDecks, set: setSetting } = s;
-  const [activeSection, setActiveSection] = useState("profile");
+  return (
+    <AuthGate>
+      <SettingsContent />
+    </AuthGate>
+  );
+}
+
+function SettingsContent() {
+  const profile = useQuery(api.profiles.me);
+  const settings = useQuery(api.settings.get);
+  const stats = useQuery(api.stats.mine);
+  const saveSettings = useMutation(api.settings.save);
+  const updateProfile = useMutation(api.profiles.update);
+  const localSet = useSettings((s) => s.set);
+  const { signOut } = useAuthActions();
+  const [draft, setDraft] = useState<SettingsDraft | null>(null);
+  const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState<string | null>(null);
   useGameViewportLock();
+
   useEffect(() => {
-    if (defaultDecks > MAX_DECKS) setSetting("defaultDecks", MAX_DECKS);
-  }, [defaultDecks, setSetting]);
+    if (!settings) return;
+    const nextDraft = toSettingsDraft(settings);
+    setDraft(nextDraft);
+    localSet("theme", nextDraft.theme);
+    localSet("cardBack", nextDraft.cardBack);
+    localSet("layout", nextDraft.layout);
+    localSet("showTrumpHints", nextDraft.showTrumpHints);
+    localSet("animations", nextDraft.animations);
+    localSet("defaultPlayers", nextDraft.defaultPlayers);
+    localSet("defaultDecks", nextDraft.defaultDecks);
+    localSet("defaultTricksPerHand", nextDraft.defaultTricksPerHand);
+    localSet("defaultBotMood", nextDraft.defaultBotMood);
+  }, [settings, localSet]);
+
   useEffect(() => {
-    const syncHash = () => setActiveSection(window.location.hash.slice(1) || "profile");
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
-  }, []);
-  const abandon = useMatch((m) => m.abandonMatch);
+    if (profile?.displayName) setDisplayName(profile.displayName);
+  }, [profile?.displayName]);
+
+  async function save(next: SettingsDraft) {
+    setError(null);
+    try {
+      await saveSettings(toSettingsDraft(next));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save settings");
+    }
+  }
+
+  function update<K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) {
+    if (!draft) return;
+    const previousTricks = draft.defaultTricksPerHand;
+    const next = { ...draft, [key]: value };
+    if (
+      key === "defaultPlayers" ||
+      key === "defaultDecks" ||
+      key === "defaultTricksPerHand"
+    ) {
+      const cap = Math.max(1, maxTricks(next.defaultPlayers, next.defaultDecks));
+      next.defaultTricksPerHand = Math.min(cap, Math.max(1, next.defaultTricksPerHand));
+    }
+    setDraft(next);
+    localSet(key as never, next[key] as never);
+    if (next.defaultTricksPerHand !== previousTricks && key !== "defaultTricksPerHand") {
+      localSet("defaultTricksPerHand" as never, next.defaultTricksPerHand as never);
+    }
+    void save(next);
+  }
+
+  if (!draft) {
+    return (
+      <div className="gb-settings-page">
+        <div className="gb-settings-inner">
+          <div className="eyebrow">Loading settings</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="gb-settings-page">
@@ -64,150 +147,72 @@ export default function SettingsPage() {
         <h1 className="gb-history-title">Settings</h1>
 
         <div className="gb-settings-shell">
-          <LayoutGroup id="settings-rail">
-            <nav className="gb-settings-rail" aria-label="Settings sections">
-              {SETTINGS_NAV.map((item) => {
-                const active = activeSection === item.href.slice(1);
-                return (
-                  <a
-                    key={item.href}
-                    href={item.href}
-                    className={[
-                      item.danger ? "danger" : "",
-                      active ? "active" : "",
-                    ].filter(Boolean).join(" ") || undefined}
-                  >
-                    {active && (
-                      <motion.span
-                        layoutId="settings-rail-active"
-                        className="gb-settings-rail-active"
-                        transition={layoutTransition}
-                        aria-hidden="true"
-                      />
-                    )}
-                    <Icon name={item.icon} size={17} />
-                    <span>{item.label}</span>
-                  </a>
-                );
-              })}
-            </nav>
-          </LayoutGroup>
-
           <div className="gb-settings-content">
-            <Section id="profile" title="Profile" className="compact">
+            <Section id="profile" title="Profile">
               <Field label="Display name">
                 <input
                   className="gb-settings-input"
-                  aria-label="Display name"
-                  value={s.playerName}
-                  onChange={(e) => s.set("playerName", e.target.value || "You")}
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  onBlur={() => updateProfile({ displayName }).catch((err) => setError(String(err)))}
                   maxLength={24}
                 />
               </Field>
+              <Button color="tertiary" size="md" onClick={() => signOut()}>
+                Sign out
+              </Button>
+              {stats && (
+                <div className="gb-history-score-grid">
+                  <Stat label="Games" value={stats.gamesPlayed} />
+                  <Stat label="Wins" value={stats.gamesWon} />
+                  <Stat
+                    label="Avg"
+                    value={stats.gamesPlayed ? Math.round(stats.totalScore / stats.gamesPlayed) : 0}
+                  />
+                  <Stat label="Best" value={stats.bestScore} />
+                </div>
+              )}
             </Section>
 
             <div className="gb-settings-columns">
               <div className="gb-settings-stack">
                 <Section id="look" title="Look">
                   <Field label="Theme">
-                    <Segmented
-                      value={s.theme}
-                      options={THEMES.map((t) => ({ value: t.id, label: t.label }))}
-                      onChange={(v) => s.set("theme", v as typeof s.theme)}
-                    />
+                    <Segmented value={draft.theme} options={THEMES} onChange={(value) => update("theme", value)} />
                   </Field>
                   <Field label="Table layout">
-                    <Segmented
-                      value={s.layout}
-                      options={LAYOUTS.map((l) => ({ value: l.id, label: l.label }))}
-                      onChange={(v) => s.set("layout", v as typeof s.layout)}
-                    />
+                    <Segmented value={draft.layout} options={LAYOUTS} onChange={(value) => update("layout", value)} />
                   </Field>
                   <Field label="Card back">
-                    <Segmented
-                      value={s.cardBack}
-                      options={CARD_BACKS.map((c) => ({ value: c.id, label: c.label }))}
-                      onChange={(v) => s.set("cardBack", v as typeof s.cardBack)}
-                    />
+                    <Segmented value={draft.cardBack} options={CARD_BACKS} onChange={(value) => update("cardBack", value)} />
                   </Field>
                   <Field label="Trump marker on your cards">
-                    <Toggle
-                      label="Trump marker on your cards"
-                      value={s.showTrumpHints}
-                      onChange={(v) => s.set("showTrumpHints", v)}
-                    />
+                    <Toggle value={draft.showTrumpHints} onChange={(value) => update("showTrumpHints", value)} />
                   </Field>
                   <Field label="Animations">
-                    <Toggle
-                      label="Animations"
-                      value={s.animations}
-                      onChange={(v) => s.set("animations", v)}
-                    />
+                    <Toggle value={draft.animations} onChange={(value) => update("animations", value)} />
                   </Field>
                 </Section>
               </div>
 
               <div className="gb-settings-stack">
-                <Section id="bots" title="Bots">
-                  <Field label="Default mood">
-                    <Segmented
-                      value={s.defaultBotMood}
-                      options={MOODS.map((m) => ({ value: m.id, label: m.label }))}
-                      onChange={(v) => s.set("defaultBotMood", v as Personality)}
-                    />
-                  </Field>
-                </Section>
-
                 <Section id="defaults" title="Match defaults">
                   <div className="gb-settings-num-grid">
+                    <NumField label="Players" value={draft.defaultPlayers} min={3} max={12} onChange={(value) => update("defaultPlayers", value)} />
+                    <NumField label="Decks" value={draft.defaultDecks} min={1} max={MAX_DECKS} onChange={(value) => update("defaultDecks", value)} />
                     <NumField
-                      label="Players"
-                      value={s.defaultPlayers}
-                      min={3}
-                      max={12}
-                      onChange={(v) => s.set("defaultPlayers", v)}
-                    />
-                    <NumField
-                      label="Decks"
-                      value={Math.min(MAX_DECKS, s.defaultDecks)}
+                      label="Max hand size"
+                      value={draft.defaultTricksPerHand}
                       min={1}
-                      max={MAX_DECKS}
-                      onChange={(v) => s.set("defaultDecks", v)}
-                    />
-                    <NumField
-                      label="Tricks per hand"
-                      value={s.defaultTricksPerHand}
-                      min={1}
-                      max={99}
-                      onChange={(v) => s.set("defaultTricksPerHand", v)}
+                      max={Math.max(1, maxTricks(draft.defaultPlayers, draft.defaultDecks))}
+                      onChange={(value) => update("defaultTricksPerHand", value)}
                     />
                   </div>
+                  <Field label="Default bot style">
+                    <Segmented value={draft.defaultBotMood} options={MOODS} onChange={(value) => update("defaultBotMood", value)} />
+                  </Field>
                 </Section>
-
-                <Section id="danger" title="Danger zone" className="danger-section">
-                  <div className="gb-danger-actions">
-                    <button
-                      className="btn"
-                      onClick={() => {
-                        if (confirm("Reset visual + match defaults to factory? Match history is kept.")) {
-                          s.reset();
-                        }
-                      }}
-                    >
-                      Reset settings
-                    </button>
-                    <button
-                      className="btn danger"
-                      onClick={() => {
-                        if (confirm("Discard the in-progress match? It will be removed.")) {
-                          abandon();
-                        }
-                      }}
-                    >
-                      Discard active match
-                    </button>
-                  </div>
-                </Section>
+                {error && <div className="gb-auth-error">{error}</div>}
               </div>
             </div>
           </div>
@@ -217,19 +222,9 @@ export default function SettingsPage() {
   );
 }
 
-function Section({
-  id,
-  title,
-  children,
-  className = "",
-}: {
-  id?: string;
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
-    <section id={id} className={"gb-settings-section " + className}>
+    <section id={id} className="gb-settings-section">
       <div className="eyebrow gb-section-kicker">{title}</div>
       <div className="gb-field-stack">{children}</div>
     </section>
@@ -245,67 +240,54 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Segmented({
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="gb-history-score">
+      <div className="gb-history-score-copy">
+        <div className="gb-history-score-name">{label}</div>
+        <div className="gb-history-score-num mono">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function Segmented<T extends string>({
   value,
   options,
   onChange,
 }: {
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
+  value: T;
+  options: { id: T; label: string }[];
+  onChange: (value: T) => void;
 }) {
-  const layoutId = "gb-segmented-" + useId().replace(/:/g, "");
   return (
     <div className="gb-segmented" role="radiogroup">
-      {options.map((o) => (
+      {options.map((option) => (
         <button
           type="button"
           role="radio"
-          aria-checked={value === o.value}
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          className={value === o.value ? "on" : ""}
+          aria-checked={value === option.id}
+          key={option.id}
+          className={value === option.id ? "on" : ""}
+          onClick={() => onChange(option.id)}
         >
-          {value === o.value && (
-            <motion.span
-              layoutId={layoutId}
-              className="gb-segmented-active"
-              transition={layoutTransition}
-              aria-hidden="true"
-            />
-          )}
-          <span>{o.label}</span>
+          <span>{option.label}</span>
         </button>
       ))}
     </div>
   );
 }
 
-function Toggle({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
+function Toggle({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }) {
   return (
-    <motion.button
+    <button
       type="button"
       onClick={() => onChange(!value)}
       className={"gb-toggle" + (value ? " on" : "")}
-      aria-label={label}
       aria-pressed={value}
-      whileTap={{ scale: 0.985 }}
-      transition={stateTransition}
     >
-      <motion.span
-        className="gb-toggle-thumb"
-        animate={{ x: value ? 20 : 0 }}
-        transition={layoutTransition}
-      />
-    </motion.button>
+      <span className="gb-toggle-thumb" />
+    </button>
   );
 }
 
@@ -320,8 +302,10 @@ function NumField({
   value: number;
   min: number;
   max: number;
-  onChange: (v: number) => void;
+  onChange: (value: number) => void;
 }) {
+  const input = useBoundedNumberInput({ value, min, max, onChange });
+
   return (
     <Field label={label}>
       <input
@@ -330,13 +314,11 @@ function NumField({
         pattern="[0-9]*"
         className="gb-settings-input mono"
         aria-label={label}
-        value={value}
-        onChange={(e) => {
-          const raw = e.target.value.replace(/\D/g, "");
-          if (raw === "") return;
-          const v = parseInt(raw, 10);
-          if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, v)));
-        }}
+        value={input.value}
+        onFocus={input.onFocus}
+        onChange={input.onChange}
+        onBlur={input.onBlur}
+        onKeyDown={input.onKeyDown}
       />
     </Field>
   );

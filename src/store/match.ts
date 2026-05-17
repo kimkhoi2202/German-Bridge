@@ -230,6 +230,8 @@ function sanitizeHydratedState(value: unknown): GameState | null {
     "match-end",
   ]);
   if (!knownPhases.has(state.phase ?? "")) return null;
+  const decks = clampDecks(state.decks, 1);
+  const tricksPerHand = clampTricksPerHand(state.tricksPerHand, playerCount, decks, 1);
   return {
     ...(state as GameState),
     players: state.players.map((player, index) => ({
@@ -238,13 +240,13 @@ function sanitizeHydratedState(value: unknown): GameState | null {
       isHuman: player?.isHuman === true,
       personality: sanitizePersonality(player?.personality),
     })),
-    decks: clampDecks(state.decks, 1),
-    tricksPerHand: clampTricksPerHand(state.tricksPerHand, playerCount, clampDecks(state.decks, 1), 1),
-    maxRounds: clampInteger(state.maxRounds, 1, 999, 1),
+    decks,
+    tricksPerHand,
+    maxRounds: clampInteger(state.maxRounds, 1, tricksPerHand, tricksPerHand),
     round: Math.max(0, clampInteger(state.round, 0, 999, 0)),
     dealerIdx: clampInteger(state.dealerIdx, 0, playerCount - 1, 0),
     hands,
-    tricksTotal: clampTricksPerHand(state.tricksTotal, playerCount, clampDecks(state.decks, 1), 1),
+    tricksTotal: clampTricksPerHand(state.tricksTotal, playerCount, decks, 1),
     bids: sanitizeBids(state.bids, playerCount),
     won: finiteNumberArray(state.won, playerCount),
     bidTurn: clampInteger(state.bidTurn, 0, playerCount - 1, 0),
@@ -282,7 +284,7 @@ export const useMatch = create<MatchStore>()(
           players,
           decks,
           tricksPerHand,
-          maxRounds: 1,
+          maxRounds: tricksPerHand,
         };
         const fresh = initialState(config);
         const dealt = startRound(fresh);

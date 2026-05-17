@@ -53,7 +53,9 @@ describe("BiddingDial", () => {
     expect(restrictedBid).toBeDisabled();
     expect(restrictedBid).toHaveAttribute("title", "Total can't equal tricks");
     expect(screen.getByRole("button", { name: "Bid 1" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Place bid · 1" })).not.toBeDisabled();
+    expect(screen.getByRole("heading", { name: "Bid" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your bid" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Place bid" })).not.toBeDisabled();
   });
 
   it("is visible during bidding even when it's not the human player's turn", () => {
@@ -70,7 +72,28 @@ describe("BiddingDial", () => {
 
     render(<BiddingDial />);
 
-    expect(screen.getByRole("heading", { name: "Margot's bid" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Place bid · 1" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "Bid" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Place bid" })).toBeDisabled();
+  });
+
+  it("does not enable bidding for another human seat in a live-room view", () => {
+    useMatch.setState({
+      state: biddingState({
+        bidTurn: 1,
+        bids: [0, null, 1],
+        players: [
+          { id: "you", name: "You", isHuman: true, personality: "mixed" },
+          { id: "guest", name: "Guest", isHuman: true, personality: "mixed" },
+          { id: "bot2", name: "Theodore", isHuman: false, personality: "mixed" },
+        ],
+      }),
+    });
+
+    render(<BiddingDial />);
+
+    expect(screen.getByRole("heading", { name: "Bid" })).toBeInTheDocument();
+    expect(screen.getByText("Waiting for your turn")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bid 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Place bid" })).toBeDisabled();
   });
 });

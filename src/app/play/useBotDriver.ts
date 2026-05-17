@@ -2,8 +2,7 @@
 
 import { useEffect } from "react";
 import { useMatch } from "@/store/match";
-import { chooseBid, chooseCard } from "@/lib/bot";
-import { createObservation } from "@/lib/botObservation";
+import { chooseRuntimeBotBid, chooseRuntimeBotCard } from "@/lib/ai/runtimeChampion";
 
 /**
  * Side-effect hook: when it's a bot's turn (during bidding or playing),
@@ -25,7 +24,7 @@ export function useBotDriver() {
     if (state.bids[idx] != null) return;
 
     const t = setTimeout(() => {
-      const value = chooseBid(createObservation(state, idx));
+      const value = chooseRuntimeBotBid(state, idx);
       try {
         bid(idx, value);
       } catch {
@@ -44,7 +43,7 @@ export function useBotDriver() {
     if (!player || player.isHuman) return;
 
     const t = setTimeout(() => {
-      const card = chooseCard(createObservation(state, idx));
+      const card = chooseRuntimeBotCard(state, idx);
       try {
         play(idx, card);
       } catch {

@@ -1,15 +1,16 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useId, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useMatch } from "@/store/match";
 import { useSettings } from "@/store/settings";
 import { PlayingCard } from "@/components/PlayingCard";
-import { Avatar } from "@/components/Avatar";
+import { CardMark } from "@/components/CardMark";
 import { useRouter } from "next/navigation";
 import { SUIT_CHAR, SUIT_NAME, isRed, sortHand, legalCards } from "@/lib/cards";
 import type { Card } from "@/lib/cards";
 import type { GameState, PlayLogEntry } from "@/lib/game";
+import { formatCurrentHand } from "@/lib/matchLabels";
 import { exitTransition, stateTransition } from "@/lib/uiMotion";
 import { BiddingDial } from "./BiddingDial";
 
@@ -40,7 +41,7 @@ function seatPos(playerIdx: number, playerCount: number): { x: number; y: number
 
   if (slot < sideCount) {
     return {
-      x: 4.2,
+      x: 4.8,
       y: sideCount === 1 ? 50 : distribute(slot, sideCount, 70, 30),
       zone: "left",
     };
@@ -51,13 +52,13 @@ function seatPos(playerIdx: number, playerCount: number): { x: number; y: number
     const { start, end } = topRailBounds(topCount);
     return {
       x: distribute(topSlot, topCount, start, end),
-      y: 3.8,
+      y: 11,
       zone: "top",
     };
   }
 
   return {
-    x: 95.8,
+    x: 95.2,
     y: sideCount === 1 ? 50 : distribute(slot - sideCount - topCount, sideCount, 30, 70),
     zone: "right",
   };
@@ -70,13 +71,39 @@ function seatDensity(playerCount: number) {
 }
 
 export function Table() {
+  return <TableView />;
+}
+
+export function TableView({
+  state: stateProp,
+  onPlay,
+  onAbandon,
+  onBid,
+  cardPlayDisabled = false,
+}: {
+  state?: GameState | null;
+  onPlay?: (card: Card) => void;
+  onAbandon?: () => void;
+  onBid?: (value: number) => void;
+  cardPlayDisabled?: boolean;
+}) {
   const router = useRouter();
-  const state = useMatch((s) => s.state);
-  const play = useMatch((s) => s.play);
-  const abandon = useMatch((s) => s.abandonMatch);
+  const localState = useMatch((s) => s.state);
+  const localPlay = useMatch((s) => s.play);
+  const localAbandon = useMatch((s) => s.abandonMatch);
   const layout = useSettings((s) => s.layout);
-  const cardBack = useSettings((s) => s.cardBack);
   const showTrumpHints = useSettings((s) => s.showTrumpHints);
+  const state = stateProp ?? localState;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [tableFanMaxWidth, setTableFanMaxWidth] = useState(780);
+  const historyTitleId = useId();
+
+  useEffect(() => {
+    const updateFanWidth = () => setTableFanMaxWidth(Math.min(window.innerWidth - 32, 780));
+    updateFanWidth();
+    window.addEventListener("resize", updateFanWidth);
+    return () => window.removeEventListener("resize", updateFanWidth);
+  }, []);
 
   if (!state) return null;
 
@@ -88,15 +115,14 @@ export function Table() {
     state.phase === "playing" ? new Set(legalCards(youHand, leadSuit).map((c) => c.key)) : null;
   const playLog = state.playLog ?? [];
   const trickCards = state.currentTrick.length;
-  const tableFanMaxWidth = typeof window === "undefined" ? 620 : Math.min(window.innerWidth * 0.9, 620);
   const trickGapBase = trickCards >= 10 ? 4 : trickCards >= 8 ? 6 : trickCards >= 6 ? 8 : 10;
-  const trickCardMin = trickCards >= 10 ? 20 : trickCards >= 8 ? 24 : trickCards >= 6 ? 28 : 32;
+  const trickCardMin = trickCards >= 10 ? 44 : trickCards >= 8 ? 50 : trickCards >= 6 ? 58 : 70;
   const playedCardSize = trickCards
     ? Math.max(
         trickCardMin,
-        Math.min(58, Math.floor((tableFanMaxWidth - (trickCards - 1) * trickGapBase) / trickCards)),
+        Math.min(104, Math.floor((tableFanMaxWidth - (trickCards - 1) * trickGapBase) / trickCards)),
       )
-    : 58;
+    : 104;
   const playedCardGap = trickCards > 1
     ? Math.max(
         3,
@@ -107,8 +133,6 @@ export function Table() {
       )
     : 0;
   const density = seatDensity(state.players.length);
-  const miniCardLimit = density === "dense" ? 4 : 5;
-  const miniCardOverlap = density === "dense" ? -7 : density === "compact" ? -8 : -10;
   const seatPositions = state.players.map((_, i) =>
     i === 0 ? null : seatPos(i, state.players.length),
   );
@@ -128,6 +152,12 @@ export function Table() {
           </span>
         </div>
         <div className="gb-hud-pill">
+          <span className="lbl">Hand</span>
+          <span className="mono">
+            {formatCurrentHand(state.round, state.maxRounds, state.tricksTotal)}
+          </span>
+        </div>
+        <div className="gb-hud-pill">
           <span className="lbl">Tricks</span>
           <span className="mono">
             {state.trickIdx}/{state.tricksTotal}
@@ -136,27 +166,32 @@ export function Table() {
         <div className="gb-hud-pill gb-trump-pill">
           <span className="lbl">Trump</span>
           {state.trumpCard ? (
-            <>
-              <span
-                className={
-                  "gb-trump-glyph " + (trumpSuit && isRed(trumpSuit) ? "red" : "black")
-                }
-              >
-                {SUIT_CHAR[trumpSuit!]}
-              </span>
-              <span className="mono">{state.trumpCard.r}</span>
-            </>
+            <CardMark card={state.trumpCard} size="sm" />
           ) : (
             <span className="mono">—</span>
           )}
         </div>
         <div className="gb-hud-spacer" />
         <button
+          type="button"
+          className="gb-hud-btn history"
+          aria-haspopup="dialog"
+          aria-expanded={historyOpen}
+          onClick={() => setHistoryOpen(true)}
+        >
+          <span>History</span>
+          <span className="mono">{playLog.length}</span>
+        </button>
+        <button
+          type="button"
           className="gb-hud-btn danger"
           onClick={() => {
             if (confirm("Abandon this match? Progress will be lost.")) {
-              abandon();
-              router.push("/");
+              if (onAbandon) onAbandon();
+              else {
+                localAbandon();
+                router.push("/");
+              }
             }
           }}
         >
@@ -194,7 +229,7 @@ export function Table() {
                     className="gb-trump-reveal"
                   >
                     <div className="eyebrow">Trump for the hand</div>
-                    <PlayingCard card={state.trumpCard} size={92} priority />
+                    <CardMark card={state.trumpCard} size="xl" />
                     <div className="gb-trump-name">{SUIT_NAME[state.trumpCard.s]}</div>
                   </motion.div>
                 )}
@@ -224,12 +259,6 @@ export function Table() {
                         <span>available</span>
                       </div>
                     </div>
-                    {state.trumpCard && (
-                      <div className="gb-mini-trump">
-                        <PlayingCard card={state.trumpCard} size={42} />
-                        <span>trump</span>
-                      </div>
-                    )}
                   </motion.div>
                 )}
 
@@ -257,7 +286,7 @@ export function Table() {
                             <span>{index + 1}</span>
                             {state.players[p.playerIdx]?.name.split(" ")[0]}
                           </div>
-                          <PlayingCard card={p.card} size={playedCardSize} />
+                          <PlayingCard card={p.card} size={playedCardSize} priority />
                         </motion.div>
                       );
                     })}
@@ -286,26 +315,7 @@ export function Table() {
                   data-zone={pos.zone}
                   style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                 >
-                  <div className="gb-seat-cards">
-                    {(state.hands[i] ?? []).slice(0, miniCardLimit).map((_, j) => {
-                      const center = (Math.min(miniCardLimit, state.hands[i]?.length ?? 0) - 1) / 2;
-                      return (
-                        <div
-                          key={j}
-                          className={"gb-mini-back back-" + cardBack}
-                          style={{
-                            marginLeft: j === 0 ? 0 : miniCardOverlap,
-                            transform: `translateY(${Math.abs(j - center) * 1.5}px) rotate(${(j - center) * 4}deg)`,
-                          }}
-                        />
-                      );
-                    })}
-                    {(state.hands[i]?.length ?? 0) > miniCardLimit && (
-                      <div className="gb-card-count">×{state.hands[i].length}</div>
-                    )}
-                  </div>
                   <div className="gb-seat-id">
-                    <Avatar name={p.name} seed={i + 1} size={36} />
                     <div className="gb-seat-info">
                       <div className="gb-seat-name">{p.name}</div>
                       <div className="gb-seat-meta">
@@ -329,15 +339,18 @@ export function Table() {
                 </div>
               );
             })}
-          </div>
 
-          {state.phase === "bidding" ? <BiddingDial variant="panel" /> : <PlayedCardsRail state={state} playLog={playLog} />}
+            {state.phase === "bidding" && (
+              <div className="gb-table-dock" data-mode="bid">
+                <BiddingDial variant="panel" state={state} onBid={onBid} />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Hero hand */}
         <div className="gb-hero">
           <div className="gb-hero-meta">
-            <Avatar name={state.players[0].name} seed={0} size={36} />
             <div>
               <div className="gb-seat-name">{state.players[0].name}</div>
               <div className="gb-seat-meta">
@@ -361,7 +374,8 @@ export function Table() {
                 state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null;
               const isLegal = state.phase !== "playing" || myLegal?.has(c.key) === true;
               const isTrump = c.s === trumpSuit && showTrumpHints;
-              const disabled = !isYourTurn || !isLegal;
+              const isPlayable = !cardPlayDisabled && isYourTurn && isLegal;
+              const disabled = cardPlayDisabled || !isYourTurn || !isLegal;
               const rank = c.r === "T" ? "10" : c.r;
               const cardName = `${rank} of ${SUIT_NAME[c.s]}`;
               return (
@@ -369,7 +383,7 @@ export function Table() {
                   key={c.key}
                   className={
                     "gb-hero-card" +
-                    (isYourTurn && isLegal ? " playable" : "") +
+                    (isPlayable ? " playable" : "") +
                     (isYourTurn && !isLegal ? " unavailable" : "") +
                     (isTrump ? " trump" : "") +
                     (isTrump && isRed(c.s) ? " trump-red" : "")
@@ -383,15 +397,26 @@ export function Table() {
                         : `${cardName} unavailable; follow suit`
                       : `${cardName} in your hand`
                   }
-                  onClick={() => play(0, c)}
+                  onClick={() => (onPlay ? onPlay(c) : localPlay(0, c))}
                 >
-                  <PlayingCard card={c} size={72} priority={index === 0} />
+                  <PlayingCard card={c} size={108} priority={index === 0} />
                 </button>
               );
             })}
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {historyOpen && (
+          <PlayedCardsModal
+            state={state}
+            playLog={playLog}
+            titleId={historyTitleId}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -412,78 +437,106 @@ function groupByTrick(entries: PlayLogEntry[]): Array<[number, PlayLogEntry[]]> 
     groups.set(entry.trick, next);
   }
   return [...groups.entries()]
-    .sort(([a], [b]) => b - a)
+    .sort(([a], [b]) => a - b)
     .map(([trick, plays]) => [
       trick,
       [...plays].sort((a, b) => a.order - b.order),
     ]);
 }
 
-const PlayedCardsRail = memo(function PlayedCardsRail({
+const PlayedCardsModal = memo(function PlayedCardsModal({
   state,
   playLog,
+  titleId,
+  onClose,
 }: {
   state: GameState;
   playLog: PlayLogEntry[];
+  titleId: string;
+  onClose: () => void;
 }) {
   const groups = useMemo(() => groupByTrick(playLog), [playLog]);
   const totalCards = state.tricksTotal * state.players.length;
 
   return (
-    <aside className="gb-play-log" aria-label="Played cards in order">
-      <div className="gb-play-log-head">
-        <div>
-          <div className="eyebrow">Played cards</div>
-          <div className="gb-play-log-sub mono">
-            {playLog.length}/{totalCards}
+    <motion.div
+      className="gb-history-overlay"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={exitTransition}
+      onClick={onClose}
+    >
+      <motion.section
+        className="gb-history-modal"
+        role="dialog"
+        aria-labelledby={titleId}
+        initial={{ opacity: 0, transform: "translateY(12px) scale(0.98)" }}
+        animate={{ opacity: 1, transform: "translateY(0) scale(1)" }}
+        exit={{ opacity: 0, transform: "translateY(8px) scale(0.985)" }}
+        transition={stateTransition}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="gb-history-head">
+          <div>
+            <div className="eyebrow">History</div>
+            <h2 id={titleId}>Played cards</h2>
           </div>
+          <button type="button" className="gb-history-close" onClick={onClose}>
+            Close
+          </button>
         </div>
-        {state.trumpCard && (
-          <div className={"gb-log-trump" + (isRed(state.trumpCard.s) ? " red" : "")}>
-            <span>{SUIT_CHAR[state.trumpCard.s]}</span>
-            <b>{rankLabel(state.trumpCard)}</b>
-          </div>
-        )}
-      </div>
 
-      <div className="gb-play-log-list">
-        {groups.length === 0 && <div className="gb-play-log-empty">No cards played yet</div>}
-        {groups.map(([trick, plays]) => {
-          const winner = plays.find((entry) => entry.winner);
-          return (
-            <section
-              key={trick}
-              className={"gb-play-log-trick" + (winner ? " complete" : " current")}
-            >
-              <div className="gb-play-log-trick-head">
-                <span>Trick {trick}</span>
-                <span>{winner ? state.players[winner.playerIdx]?.name : "In play"}</span>
-              </div>
+        <div className="gb-history-summary">
+          <span className="mono">
+            {playLog.length}/{totalCards} cards
+          </span>
+          {state.trumpCard && (
+            <span className="gb-log-trump">
+              <CardMark card={state.trumpCard} size="xs" />
+            </span>
+          )}
+        </div>
 
-              <div className="gb-play-log-plays">
-                {plays.map((entry) => {
-                  const player = state.players[entry.playerIdx];
-                  return (
-                    <div
-                      key={`${entry.trick}-${entry.order}-${entry.card.key}`}
-                      className={"gb-play-log-row" + (entry.winner ? " winner" : "")}
-                    >
-                      <span className="gb-play-order mono">{entry.order}</span>
-                      <span className="gb-play-player">{player?.name ?? "Player"}</span>
-                      <span
-                        className={"gb-play-card-chip mono " + (isRed(entry.card.s) ? "red" : "black")}
-                        aria-label={`${rankLabel(entry.card)} of ${SUIT_NAME[entry.card.s]}`}
+        <div className="gb-history-list">
+          {groups.length === 0 && <div className="gb-history-empty">No cards played yet</div>}
+          {groups.map(([trick, plays]) => {
+            const winner = plays.find((entry) => entry.winner);
+            return (
+              <section
+                key={trick}
+                className={"gb-play-log-trick" + (winner ? " complete" : " current")}
+              >
+                <div className="gb-play-log-trick-head">
+                  <span>Trick {trick}</span>
+                  <span>{winner ? state.players[winner.playerIdx]?.name : "In play"}</span>
+                </div>
+
+                <div className="gb-play-log-plays">
+                  {plays.map((entry) => {
+                    const player = state.players[entry.playerIdx];
+                    return (
+                      <div
+                        key={`${entry.trick}-${entry.order}-${entry.card.key}`}
+                        className={"gb-play-log-row" + (entry.winner ? " winner" : "")}
                       >
-                        {cardLabel(entry.card)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </aside>
+                        <span className="gb-play-order mono">{entry.order}</span>
+                        <span className="gb-play-player">{player?.name ?? "Player"}</span>
+                        <span
+                          className={"gb-play-card-chip mono " + (isRed(entry.card.s) ? "red" : "black")}
+                          aria-label={`${rankLabel(entry.card)} of ${SUIT_NAME[entry.card.s]}`}
+                        >
+                          {cardLabel(entry.card)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </motion.section>
+    </motion.div>
   );
 });

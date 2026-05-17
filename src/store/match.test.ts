@@ -26,8 +26,9 @@ describe("useMatch — store integration", () => {
     expect(s!.players[0].isHuman).toBe(true);
     expect(s!.players[0].name).toBe("Test");
     expect(s!.tricksPerHand).toBe(3);
+    expect(s!.maxRounds).toBe(3);
     expect(s!.phase).toBe("dealing");
-    expect(s!.hands.every((h) => h.length === 3)).toBe(true);
+    expect(s!.hands.every((h) => h.length === 1)).toBe(true);
   });
 
   it("drives a full match through every phase to match-end and archives the result", () => {
@@ -93,6 +94,7 @@ describe("useMatch — store integration", () => {
     expect(archive).toHaveLength(1);
     expect(archive[0].players).toHaveLength(3);
     expect(archive[0].cumulative).toHaveLength(3);
+    expect(archive[0].hands).toHaveLength(2);
   });
 
   it("abandonMatch clears the in-progress state", () => {
@@ -123,6 +125,20 @@ describe("useMatch — store integration", () => {
     expect(s.players[1].personality).toBe("cautious"); // global default
     expect(s.players[2].personality).toBe("aggressive"); // override
     expect(s.players[3].personality).toBe("cautious");
+  });
+
+  it("can start a match against champion snapshot bots", () => {
+    useMatch.getState().startMatch({
+      playerCount: 4,
+      decks: 2,
+      tricksPerHand: 3,
+      botMood: "champion",
+      botOverrides: [],
+      playerName: "Hero",
+    });
+    const s = useMatch.getState().state!;
+    expect(s.decks).toBe(2);
+    expect(s.players.slice(1).every((player) => player.personality === "champion")).toBe(true);
   });
 
   it("sanitizes match setup and ignores stale player actions", () => {

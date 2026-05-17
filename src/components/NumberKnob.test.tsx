@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { useState } from "react";
 import { NumberKnob } from "./NumberKnob";
 
 describe("NumberKnob", () => {
@@ -35,5 +36,39 @@ describe("NumberKnob", () => {
     const onChange = vi.fn();
     render(<NumberKnob value={10} onChange={onChange} min={1} max={10} />);
     expect(screen.getByLabelText(/increase/i)).toBeDisabled();
+  });
+
+  it("allows a below-min prefix while typing an in-range value", () => {
+    function Harness() {
+      const [value, setValue] = useState(4);
+      return <NumberKnob label="Players" value={value} onChange={setValue} min={3} max={12} />;
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("Players");
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "1" } });
+    expect(input).toHaveValue("1");
+
+    fireEvent.change(input, { target: { value: "10" } });
+    expect(input).toHaveValue("10");
+  });
+
+  it("clamps out-of-range drafts on blur", () => {
+    function Harness() {
+      const [value, setValue] = useState(4);
+      return <NumberKnob label="Players" value={value} onChange={setValue} min={3} max={12} />;
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("Players");
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "13" } });
+    expect(input).toHaveValue("13");
+
+    fireEvent.blur(input);
+    expect(input).toHaveValue("12");
   });
 });

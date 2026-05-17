@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { useBoundedNumberInput } from "./useBoundedNumberInput";
 
 interface Props {
   label?: string;
@@ -27,6 +28,7 @@ export function NumberKnob({
   const inc = () => onChange(Math.min(max, value + 1));
   const atMin = value <= min;
   const atMax = value >= max;
+  const input = useBoundedNumberInput({ value, min, max, onChange });
   return (
     <div
       className={cn(
@@ -51,14 +53,17 @@ export function NumberKnob({
           −
         </button>
         <input
-          type="number"
-          value={value}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          aria-label={label}
+          value={input.value}
           min={min}
           max={max}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, v)));
-          }}
+          onFocus={input.onFocus}
+          onChange={input.onChange}
+          onBlur={input.onBlur}
+          onKeyDown={input.onKeyDown}
           className="flex-1 min-w-0 h-9 px-3 rounded-[10px] border border-white/15 bg-black/25 text-[var(--color-cream)] text-lg text-center outline-none focus:border-[var(--color-brass)] focus:outline-2 focus:outline-[var(--color-brass)] mono"
           style={{ appearance: "textfield" }}
         />

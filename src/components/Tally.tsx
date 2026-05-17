@@ -1,6 +1,7 @@
 "use client";
 
-import { isRed, SUIT_CHAR, type Card } from "@/lib/cards";
+import { CardMark } from "@/components/CardMark";
+import type { Card } from "@/lib/cards";
 
 export interface TallyRound {
   round: number;
@@ -21,6 +22,15 @@ export function TallyTable({
   history: TallyRound[];
   cumulative: number[];
 }) {
+  const rankedPlayers = playerNames
+    .map((name, playerIndex) => ({
+      name,
+      playerIndex,
+      total: cumulative[playerIndex] ?? 0,
+      isYou: isYou[playerIndex] ?? false,
+    }))
+    .sort((a, b) => b.total - a.total || a.playerIndex - b.playerIndex);
+
   return (
     <div className="gb-tally">
       <div
@@ -31,34 +41,31 @@ export function TallyTable({
           <div className="gb-tally-cell head">Player</div>
           {history.map((h) => (
             <div key={h.round} className="gb-tally-cell head round">
-              <span className="r-num">{history.length === 1 ? "Hand" : `R${h.round}`}</span>
-              <span
-                className={
-                  "r-trump " + (h.trump && isRed(h.trump.s) ? "red" : "")
-                }
-              >
-                {h.trump ? SUIT_CHAR[h.trump.s] : ""}
-              </span>
+              <span className="r-num">{history.length === 1 ? "Hand" : `H${h.round}`}</span>
+              {h.trump && <CardMark card={h.trump} size="xs" />}
             </div>
           ))}
           <div className="gb-tally-cell head total">Total</div>
         </div>
 
-        {playerNames.map((name, i) => (
-          <div key={i} className={"gb-tally-row" + (isYou[i] ? " you" : "")}>
+        {rankedPlayers.map(({ name, playerIndex, total, isYou: rowIsYou }) => (
+          <div
+            key={playerIndex}
+            className={"gb-tally-row" + (rowIsYou ? " you" : "")}
+          >
             <div className="gb-tally-cell">
               <span className="gb-name-strong">{name}</span>
             </div>
             {history.map((h) => {
-              const s = h.scores[i] ?? 0;
-              const made = h.bids[i] === h.won[i];
+              const s = h.scores[playerIndex] ?? 0;
+              const made = h.bids[playerIndex] === h.won[playerIndex];
               return (
                 <div
                   key={h.round}
                   className={"gb-tally-cell entry " + (made ? "made" : "missed")}
                 >
                   <span className="bid-pair mono">
-                    {h.bids[i]}/{h.won[i]}
+                    {h.bids[playerIndex]}/{h.won[playerIndex]}
                   </span>
                   <span className={"score " + (s >= 0 ? "pos" : "neg")}>
                     {s >= 0 ? "+" : ""}
@@ -68,8 +75,8 @@ export function TallyTable({
               );
             })}
             <div className="gb-tally-cell total">
-              <Marks n={cumulative[i] ?? 0} />
-              <span className="gb-tally-num mono">{cumulative[i] ?? 0}</span>
+              <Marks n={total} />
+              <span className="gb-tally-num mono">{total}</span>
             </div>
           </div>
         ))}

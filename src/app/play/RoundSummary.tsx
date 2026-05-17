@@ -3,18 +3,39 @@
 import { useId } from "react";
 import { useMatch } from "@/store/match";
 import { Avatar } from "@/components/Avatar";
+import { Button } from "@/components/base/buttons/button";
 import { Icon } from "@/components/Icon";
-import { PlayingCard } from "@/components/PlayingCard";
-import { cumulativeScores } from "@/lib/game";
+import { CardMark } from "@/components/CardMark";
+import { cumulativeScores, type GameState } from "@/lib/game";
 
-export function RoundSummary() {
-  const state = useMatch((s) => s.state);
-  const advance = useMatch((s) => s.advanceRound);
+export function RoundSummary({
+  state: stateProp,
+  onAdvance,
+}: {
+  state?: GameState | null;
+  onAdvance?: () => void;
+}) {
+  const localState = useMatch((s) => s.state);
+  const localAdvance = useMatch((s) => s.advanceRound);
+  const state = stateProp ?? localState;
+  const advance = onAdvance ?? localAdvance;
   const titleId = useId();
   if (!state || state.phase !== "round-end") return null;
 
   const last = state.history[state.history.length - 1];
   const cum = cumulativeScores(state);
+  const rankedPlayers = state.players
+    .map((player, playerIndex) => ({
+      player,
+      playerIndex,
+      total: cum[playerIndex] ?? 0,
+      handScore: last.scores[playerIndex] ?? 0,
+      bid: last.bids[playerIndex] ?? 0,
+      won: last.won[playerIndex] ?? 0,
+    }))
+    .sort((a, b) => b.total - a.total || a.playerIndex - b.playerIndex);
+  const isFinalHand = state.round >= state.maxRounds;
+  const nextHandSize = Math.min(state.round + 1, state.tricksPerHand);
 
   return (
     <div
@@ -31,33 +52,32 @@ export function RoundSummary() {
           </div>
           {last?.trump && (
             <div className="gb-summary-trump">
-              <PlayingCard card={last.trump} size={66} />
               <div className="eyebrow">Trump</div>
+              <CardMark card={last.trump} size="lg" />
             </div>
           )}
         </div>
 
         <div className="gb-summary-rows">
-          {state.players.map((p, i) => {
-            const score = last.scores[i];
-            const made = last.bids[i] === last.won[i];
+          {rankedPlayers.map(({ player, playerIndex, total, handScore, bid, won }) => {
+            const made = bid === won;
             return (
               <div
-                key={p.id}
+                key={player.id}
                 className={"gb-summary-row " + (made ? "made" : "missed")}
               >
-                <Avatar name={p.name} seed={i} size={32} />
-                <div className="gb-sum-name">{p.name}</div>
+                <Avatar name={player.name} seed={playerIndex} size={32} />
+                <div className="gb-sum-name">{player.name}</div>
                 <div className="gb-sum-bid">
-                  bid <b>{last.bids[i]}</b>
+                  bid <b>{bid}</b>
                 </div>
                 <div className="gb-sum-won">
-                  took <b>{last.won[i]}</b>
+                  took <b>{won}</b>
                 </div>
-                <div className={"gb-sum-delta " + (score >= 0 ? "pos" : "neg")}>
-                  {score >= 0 ? `+${score}` : score}
+                <div className={"gb-sum-delta " + (handScore >= 0 ? "pos" : "neg")}>
+                  {handScore >= 0 ? `+${handScore}` : handScore}
                 </div>
-                <div className="gb-sum-cum mono">→ {cum[i]}</div>
+                <div className="gb-sum-cum mono">→ {total}</div>
               </div>
             );
           })}
@@ -65,14 +85,14 @@ export function RoundSummary() {
 
         <div className="gb-summary-foot">
           <div className="gb-progress">
-            <span>Final score is ready</span>
+            <span>{isFinalHand ? "Final score is ready" : `Next hand has ${nextHandSize} cards`}</span>
             <div className="gb-progress-bar">
-              <div style={{ width: "100%" }} />
+              <div style={{ width: `${Math.min(100, (state.round / state.maxRounds) * 100)}%` }} />
             </div>
           </div>
-          <button className="btn brass" onClick={() => advance()}>
-            See final <Icon name="chevR" size={14} />
-          </button>
+          <Button size="md" onClick={() => advance()}>
+            {isFinalHand ? "See final" : "Deal next hand"} <Icon name="chevR" size={14} />
+          </Button>
         </div>
       </div>
     </div>

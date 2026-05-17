@@ -3,24 +3,38 @@
 import { useEffect, useId, useState } from "react";
 import { motion } from "motion/react";
 import { useMatch } from "@/store/match";
-import { lastBidderRestriction } from "@/lib/game";
+import { lastBidderRestriction, type GameState } from "@/lib/game";
 import { handEquity } from "@/lib/bot";
 import { stateTransition } from "@/lib/uiMotion";
+import { CardMark } from "@/components/CardMark";
+import { Button } from "@/components/base/buttons/button";
+import { SUIT_NAME } from "@/lib/cards";
 
 interface BiddingDialProps {
   variant?: "overlay" | "panel";
+  state?: GameState | null;
+  onBid?: (value: number) => void;
+  viewerIdx?: number;
 }
 
-export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
-  const state = useMatch((s) => s.state);
-  const placeBid = useMatch((s) => s.bid);
+export function BiddingDial({
+  variant = "overlay",
+  state: stateProp,
+  onBid,
+  viewerIdx = 0,
+}: BiddingDialProps) {
+  const localState = useMatch((s) => s.state);
+  const localPlaceBid = useMatch((s) => s.bid);
+  const state = stateProp ?? localState;
   const titleId = useId();
 
   const isBidding = !!state && state.phase === "bidding";
-  const yourTurn = isBidding && state.players[state.bidTurn]?.isHuman === true;
+  const yourTurn =
+    isBidding &&
+    state.bidTurn === viewerIdx &&
+    state.players[viewerIdx]?.isHuman === true;
   const canBid = yourTurn;
   const isPanel = variant === "panel";
-  const currentBidderName = isBidding ? state.players[state.bidTurn]?.name : null;
 
   const trumpSuit = state?.trumpCard?.s ?? null;
   const hint = state && state.hands[0]
@@ -68,14 +82,18 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
         transition={stateTransition}
       >
         <div className="gb-bid-head">
-          <div>
-            <div className="eyebrow">Bid</div>
+          <div className="gb-bid-titleblock">
             <h2 id={titleId} className="gb-bid-title">
-              {canBid ? "Your bid" : `${currentBidderName ?? "Next player"}'s bid`}
+              Bid
             </h2>
           </div>
+          {state.trumpCard && (
+            <div className="gb-bid-trump-inline" aria-label={`Trump is ${SUIT_NAME[state.trumpCard.s]}`}>
+              <span>Trump</span>
+              <CardMark card={state.trumpCard} size="xs" />
+            </div>
+          )}
           <div className="gb-bid-context">
-            <span className="gb-bid-total mono">0–{state.tricksTotal} tricks</span>
             <span className="gb-bid-meta-chip mono">
               {placedBidTotal} bid / {state.tricksTotal} total
             </span>
@@ -124,17 +142,21 @@ export function BiddingDial({ variant = "overlay" }: BiddingDialProps) {
               <span className="gb-bid-wait">Waiting for your turn</span>
             </div>
           )}
-          <button
+          <Button
             type="button"
-            className="btn brass gb-bid-submit"
-            disabled={submitDisabled || !canBid}
+            className="gb-bid-submit"
+            size="lg"
+            isDisabled={submitDisabled || !canBid}
             title={submitDisabled ? "Total can't equal tricks" : ""}
             onClick={() => {
-              if (!submitDisabled && canBid) placeBid(0, v);
+              if (!submitDisabled && canBid) {
+                if (onBid) onBid(v);
+                else localPlaceBid(0, v);
+              }
             }}
           >
-            Place bid · {v}
-          </button>
+            Place bid
+          </Button>
         </div>
       </motion.div>
     </div>

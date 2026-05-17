@@ -4,21 +4,30 @@ import { useEffect, useId } from "react";
 import { useRouter } from "next/navigation";
 import { useMatch } from "@/store/match";
 import { Avatar } from "@/components/Avatar";
+import { Button } from "@/components/base/buttons/button";
 import { TallyTable } from "@/components/Tally";
-import { cumulativeScores } from "@/lib/game";
+import { cumulativeScores, type GameState } from "@/lib/game";
+import { formatHandLadder } from "@/lib/matchLabels";
 
-export function MatchEnd() {
+export function MatchEnd({
+  state: stateProp,
+  onFinish,
+}: {
+  state?: GameState | null;
+  onFinish?: (destination: "history" | "lobby") => void;
+}) {
   const router = useRouter();
-  const state = useMatch((s) => s.state);
+  const localState = useMatch((s) => s.state);
   const archiveCurrent = useMatch((s) => s.archiveCurrent);
   const finishMatch = useMatch((s) => s.finishMatch);
   const titleId = useId();
+  const state = stateProp ?? localState;
 
   useEffect(() => {
-    if (state?.phase === "match-end") {
+    if (!stateProp && state?.phase === "match-end") {
       archiveCurrent();
     }
-  }, [state?.phase, archiveCurrent]);
+  }, [stateProp, state?.phase, archiveCurrent]);
 
   if (!state || state.phase !== "match-end") return null;
 
@@ -42,7 +51,7 @@ export function MatchEnd() {
         </h2>
         <p className="gb-end-sub">
           {state.players.length} players · {state.decks} deck{state.decks > 1 ? "s" : ""} ·{" "}
-          {state.tricksPerHand} tricks
+          {formatHandLadder(state.tricksPerHand, state.maxRounds)}
         </p>
 
         <div className="gb-podium">
@@ -64,24 +73,31 @@ export function MatchEnd() {
         />
 
         <div className="gb-end-foot">
-          <button
-            className="btn ghost"
+          <Button
+            color="tertiary"
+            size="md"
             onClick={() => {
-              finishMatch();
-              router.push("/history");
+              if (onFinish) onFinish("history");
+              else {
+                finishMatch();
+                router.push("/history");
+              }
             }}
           >
             View history
-          </button>
-          <button
-            className="btn brass"
+          </Button>
+          <Button
+            size="md"
             onClick={() => {
-              finishMatch();
-              router.push("/");
+              if (onFinish) onFinish("lobby");
+              else {
+                finishMatch();
+                router.push("/");
+              }
             }}
           >
             Another night
-          </button>
+          </Button>
         </div>
       </div>
     </div>
