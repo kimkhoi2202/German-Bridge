@@ -20,6 +20,7 @@ type SettingsDraft = {
   animations: boolean;
   defaultPlayers: number;
   defaultDecks: number;
+  defaultStartingTricksPerHand: number;
   defaultTricksPerHand: number;
   defaultBotMood: Personality;
 };
@@ -33,6 +34,7 @@ function toSettingsDraft(settings: SettingsDraft): SettingsDraft {
     animations: settings.animations,
     defaultPlayers: settings.defaultPlayers,
     defaultDecks: settings.defaultDecks,
+    defaultStartingTricksPerHand: settings.defaultStartingTricksPerHand ?? 1,
     defaultTricksPerHand: settings.defaultTricksPerHand,
     defaultBotMood: settings.defaultBotMood,
   };
@@ -92,6 +94,7 @@ function SettingsContent() {
     localSet("animations", nextDraft.animations);
     localSet("defaultPlayers", nextDraft.defaultPlayers);
     localSet("defaultDecks", nextDraft.defaultDecks);
+    localSet("defaultStartingTricksPerHand", nextDraft.defaultStartingTricksPerHand);
     localSet("defaultTricksPerHand", nextDraft.defaultTricksPerHand);
     localSet("defaultBotMood", nextDraft.defaultBotMood);
   }, [settings, localSet]);
@@ -112,18 +115,30 @@ function SettingsContent() {
 
   function update<K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) {
     if (!draft) return;
+    const previousStartingTricks = draft.defaultStartingTricksPerHand;
     const previousTricks = draft.defaultTricksPerHand;
     const next = { ...draft, [key]: value };
     if (
       key === "defaultPlayers" ||
       key === "defaultDecks" ||
+      key === "defaultStartingTricksPerHand" ||
       key === "defaultTricksPerHand"
     ) {
       const cap = Math.max(1, maxTricks(next.defaultPlayers, next.defaultDecks));
       next.defaultTricksPerHand = Math.min(cap, Math.max(1, next.defaultTricksPerHand));
+      next.defaultStartingTricksPerHand = Math.min(
+        next.defaultTricksPerHand,
+        Math.max(1, next.defaultStartingTricksPerHand),
+      );
     }
     setDraft(next);
     localSet(key as never, next[key] as never);
+    if (
+      next.defaultStartingTricksPerHand !== previousStartingTricks &&
+      key !== "defaultStartingTricksPerHand"
+    ) {
+      localSet("defaultStartingTricksPerHand" as never, next.defaultStartingTricksPerHand as never);
+    }
     if (next.defaultTricksPerHand !== previousTricks && key !== "defaultTricksPerHand") {
       localSet("defaultTricksPerHand" as never, next.defaultTricksPerHand as never);
     }
@@ -201,6 +216,13 @@ function SettingsContent() {
                   <div className="gb-settings-num-grid">
                     <NumField label="Players" value={draft.defaultPlayers} min={3} max={12} onChange={(value) => update("defaultPlayers", value)} />
                     <NumField label="Decks" value={draft.defaultDecks} min={1} max={MAX_DECKS} onChange={(value) => update("defaultDecks", value)} />
+                    <NumField
+                      label="Starting hand size"
+                      value={draft.defaultStartingTricksPerHand}
+                      min={1}
+                      max={draft.defaultTricksPerHand}
+                      onChange={(value) => update("defaultStartingTricksPerHand", value)}
+                    />
                     <NumField
                       label="Max hand size"
                       value={draft.defaultTricksPerHand}

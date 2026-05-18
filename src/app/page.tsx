@@ -36,6 +36,7 @@ function LobbyContent() {
 
   const [playerCount, setPlayerCount] = useState(4);
   const [decks, setDecks] = useState(2);
+  const [startingTricks, setStartingTricks] = useState(1);
   const [tricks, setTricks] = useState(10);
   const [botMood, setBotMood] = useState<Personality>("mixed");
   const [inviteCode, setInviteCode] = useState("");
@@ -46,18 +47,25 @@ function LobbyContent() {
     if (!settings) return;
     setPlayerCount(settings.defaultPlayers);
     setDecks(settings.defaultDecks);
+    setStartingTricks(settings.defaultStartingTricksPerHand ?? 1);
     setTricks(settings.defaultTricksPerHand);
     setBotMood(settings.defaultBotMood);
   }, [settings]);
 
   const max = Math.max(1, maxTricks(playerCount, decks));
   const safeTricks = Math.min(tricks, max);
+  const safeStartingTricks = Math.min(startingTricks, safeTricks);
   const totalCards = 52 * decks;
   const largestHandCards = playerCount * safeTricks + 1;
+  const smallestHandCards = playerCount * safeStartingTricks + 1;
 
   useEffect(() => {
     if (tricks > max) setTricks(max);
   }, [max, tricks]);
+
+  useEffect(() => {
+    if (startingTricks > safeTricks) setStartingTricks(safeTricks);
+  }, [safeTricks, startingTricks]);
 
   async function onCreate() {
     setError(null);
@@ -66,6 +74,7 @@ function LobbyContent() {
       const room = await createRoom({
         playerCount,
         decks,
+        startingTricksPerHand: safeStartingTricks,
         tricksPerHand: safeTricks,
         botMood,
       });
@@ -109,6 +118,13 @@ function LobbyContent() {
               <Knob label="Players" value={playerCount} min={3} max={12} set={setPlayerCount} />
               <Knob label="Decks" value={decks} min={1} max={MAX_DECKS} set={setDecks} />
               <Knob
+                label="Starting hand size"
+                value={safeStartingTricks}
+                min={1}
+                max={safeTricks}
+                set={setStartingTricks}
+              />
+              <Knob
                 label="Max hand size"
                 value={safeTricks}
                 min={1}
@@ -120,9 +136,9 @@ function LobbyContent() {
 
             <div className="gb-lobby-validate">
               <span className="mono">
-                Largest hand uses {largestHandCards} of {totalCards} cards
+                Hands use {smallestHandCards}-{largestHandCards} of {totalCards} cards
               </span>
-              <span>plays hands 1-{safeTricks}</span>
+              <span>plays hands {safeStartingTricks}-{safeTricks}</span>
             </div>
 
             <div className="gb-field">
@@ -162,15 +178,17 @@ function LobbyContent() {
                   className="gb-name-input mono"
                   aria-label="Invite code"
                   value={inviteCode}
-                  onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+                  onChange={(event) => setInviteCode(event.target.value.replace(/\D/g, ""))}
                   maxLength={6}
-                  placeholder="CODE"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="123456"
                   spellCheck={false}
                   autoComplete="off"
                 />
               </span>
             </label>
-            <Button size="md" isDisabled={busy || inviteCode.trim().length < 3}>
+            <Button type="submit" size="md" isDisabled={busy || inviteCode.trim().length < 3}>
               Join room
             </Button>
             {error && <div className="gb-auth-error">{error}</div>}

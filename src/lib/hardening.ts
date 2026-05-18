@@ -42,6 +42,15 @@ export function clampTricksPerHand(
   return clampInteger(value, 1, max, Math.min(max, Math.max(1, fallback)));
 }
 
+export function clampStartingTricksPerHand(
+  value: unknown,
+  maxHandSize: number,
+  fallback = 1,
+): number {
+  const max = Math.max(1, Math.trunc(maxHandSize));
+  return clampInteger(value, 1, max, Math.min(max, Math.max(1, fallback)));
+}
+
 export function sanitizePlayerName(
   value: unknown,
   fallback = "You",

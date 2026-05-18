@@ -15,6 +15,7 @@ describe("useMatch — store integration", () => {
     useMatch.getState().startMatch({
       playerCount: 4,
       decks: 1,
+      startingTricksPerHand: 2,
       tricksPerHand: 3,
       botMood: "mixed",
       botOverrides: [],
@@ -25,10 +26,11 @@ describe("useMatch — store integration", () => {
     expect(s!.players).toHaveLength(4);
     expect(s!.players[0].isHuman).toBe(true);
     expect(s!.players[0].name).toBe("Test");
+    expect(s!.startingTricksPerHand).toBe(2);
     expect(s!.tricksPerHand).toBe(3);
-    expect(s!.maxRounds).toBe(3);
+    expect(s!.maxRounds).toBe(2);
     expect(s!.phase).toBe("dealing");
-    expect(s!.hands.every((h) => h.length === 1)).toBe(true);
+    expect(s!.hands.every((h) => h.length === 2)).toBe(true);
   });
 
   it("drives a full match through every phase to match-end and archives the result", () => {

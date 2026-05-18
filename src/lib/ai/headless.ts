@@ -20,6 +20,7 @@ import { createBaselinePolicy, type BotPolicy, type ScoredAction } from "./polic
 export interface TrainingMatchConfig {
   playerCount: number;
   decks?: number;
+  startingTricksPerHand?: number;
   tricksPerHand: number;
   maxRounds?: number;
   seed?: string | number;
@@ -61,6 +62,7 @@ export interface HeadlessMatchResult {
   config: {
     playerCount: number;
     decks: number;
+    startingTricksPerHand: number;
     tricksPerHand: number;
     maxRounds: number;
   };
@@ -108,11 +110,24 @@ export function normalizeTrainingConfig(config: TrainingMatchConfig): MatchConfi
       `Training tricksPerHand must be an integer from 1 to ${max} for ${players.length} players and ${decks} decks, got ${config.tricksPerHand}`,
     );
   }
+  const startingTricksPerHand = config.startingTricksPerHand ?? 1;
+  if (
+    !Number.isInteger(startingTricksPerHand) ||
+    startingTricksPerHand < 1 ||
+    startingTricksPerHand > config.tricksPerHand
+  ) {
+    throw new Error(
+      `Training startingTricksPerHand must be an integer from 1 to ${config.tricksPerHand}, got ${startingTricksPerHand}`,
+    );
+  }
+  const ladderRounds = config.tricksPerHand - startingTricksPerHand + 1;
+  const maxRounds = Math.max(1, Math.min(config.maxRounds ?? ladderRounds, ladderRounds));
   return {
     players,
     decks,
+    startingTricksPerHand,
     tricksPerHand: config.tricksPerHand,
-    maxRounds: config.maxRounds ?? config.tricksPerHand,
+    maxRounds,
   };
 }
 
@@ -208,6 +223,7 @@ export function runHeadlessMatch(config: TrainingMatchConfig): HeadlessMatchResu
     config: {
       playerCount: matchConfig.players.length,
       decks: matchConfig.decks,
+      startingTricksPerHand: matchConfig.startingTricksPerHand ?? 1,
       tricksPerHand: matchConfig.tricksPerHand,
       maxRounds: matchConfig.maxRounds,
     },

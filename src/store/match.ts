@@ -22,6 +22,7 @@ import {
   clampDecks,
   clampInteger,
   clampPlayers,
+  clampStartingTricksPerHand,
   clampTricksPerHand,
   finiteNumber,
   finiteNumberArray,
@@ -48,7 +49,7 @@ const BOT_NAMES = [
 
 export interface MatchSummary {
   finishedAt: number;
-  config: { players: number; decks: number; tricksPerHand: number };
+  config: { players: number; decks: number; startingTricksPerHand: number; tricksPerHand: number };
   players: { name: string; isHuman: boolean }[];
   cumulative: number[];
   hands: RoundRecord[];
@@ -66,6 +67,7 @@ interface MatchStore {
   startMatch: (args: {
     playerCount: number;
     decks: number;
+    startingTricksPerHand?: number;
     tricksPerHand: number;
     botMood: Personality;
     botOverrides: (Personality | null)[];
@@ -126,6 +128,8 @@ function sanitizeRoundRecords(value: unknown, playerCount: number): RoundRecord[
       won: finiteNumberArray(round.won, playerCount),
       scores: finiteNumberArray(round.scores, playerCount),
       dealerIdx: clampInteger(round.dealerIdx, 0, playerCount - 1, 0),
+      tricksTotal: clampInteger(round.tricksTotal, 1, 999, round.round ?? index + 1),
+      playLog: sanitizePlayLog(round.playLog, playerCount),
     }];
   });
 }
@@ -148,13 +152,18 @@ function sanitizeArchive(value: unknown): MatchSummary[] {
       decks,
       1,
     );
+    const startingTricksPerHand = clampStartingTricksPerHand(
+      item.config?.startingTricksPerHand,
+      tricksPerHand,
+      1,
+    );
     const hands = sanitizeRoundRecords(item.hands ?? item.rounds, playerCount);
     const cumulative = finiteNumberArray(item.cumulative, playerCount);
     const winnerIdx = clampInteger(item.winnerIdx, 0, playerCount - 1, 0);
 
     return [{
       finishedAt: finiteNumber(item.finishedAt, Date.now()),
-      config: { players: playerCount, decks, tricksPerHand },
+      config: { players: playerCount, decks, startingTricksPerHand, tricksPerHand },
       players: players.slice(0, playerCount),
       cumulative,
       hands,
@@ -232,6 +241,12 @@ function sanitizeHydratedState(value: unknown): GameState | null {
   if (!knownPhases.has(state.phase ?? "")) return null;
   const decks = clampDecks(state.decks, 1);
   const tricksPerHand = clampTricksPerHand(state.tricksPerHand, playerCount, decks, 1);
+  const startingTricksPerHand = clampStartingTricksPerHand(
+    state.startingTricksPerHand,
+    tricksPerHand,
+    1,
+  );
+  const ladderRounds = Math.max(1, tricksPerHand - startingTricksPerHand + 1);
   return {
     ...(state as GameState),
     players: state.players.map((player, index) => ({
@@ -241,8 +256,9 @@ function sanitizeHydratedState(value: unknown): GameState | null {
       personality: sanitizePersonality(player?.personality),
     })),
     decks,
+    startingTricksPerHand,
     tricksPerHand,
-    maxRounds: clampInteger(state.maxRounds, 1, tricksPerHand, tricksPerHand),
+    maxRounds: clampInteger(state.maxRounds, 1, ladderRounds, ladderRounds),
     round: Math.max(0, clampInteger(state.round, 0, 999, 0)),
     dealerIdx: clampInteger(state.dealerIdx, 0, playerCount - 1, 0),
     hands,
@@ -273,6 +289,11 @@ export const useMatch = create<MatchStore>()(
         const decks = clampDecks(args.decks, 1);
         const max = maxTricks(playerCount, decks);
         const tricksPerHand = clampTricksPerHand(args.tricksPerHand, playerCount, decks, max);
+        const startingTricksPerHand = clampStartingTricksPerHand(
+          args.startingTricksPerHand,
+          tricksPerHand,
+          1,
+        );
         const players = buildPlayers({
           ...args,
           playerCount,
@@ -283,8 +304,9 @@ export const useMatch = create<MatchStore>()(
         const config: MatchConfig = {
           players,
           decks,
+          startingTricksPerHand,
           tricksPerHand,
-          maxRounds: tricksPerHand,
+          maxRounds: tricksPerHand - startingTricksPerHand + 1,
         };
         const fresh = initialState(config);
         const dealt = startRound(fresh);
@@ -363,6 +385,7 @@ export const useMatch = create<MatchStore>()(
           (a) =>
             a.config.players === s.players.length &&
             a.config.decks === s.decks &&
+            a.config.startingTricksPerHand === (s.startingTricksPerHand ?? 1) &&
             a.config.tricksPerHand === s.tricksPerHand &&
             a.players.map((p) => p.name).join("\u0000") ===
               s.players.map((p) => p.name).join("\u0000") &&
@@ -381,6 +404,7 @@ export const useMatch = create<MatchStore>()(
           config: {
             players: s.players.length,
             decks: s.decks,
+            startingTricksPerHand: s.startingTricksPerHand ?? 1,
             tricksPerHand: s.tricksPerHand,
           },
           players: s.players.map((p) => ({
@@ -398,7 +422,7 @@ export const useMatch = create<MatchStore>()(
     }),
     {
       name: "gb-match",
-      version: 2,
+      version: 3,
       partialize: (s) => ({ state: s.state, archive: s.archive }),
       migrate: (persisted) => {
         const value = persisted as Partial<MatchStore> | undefined;

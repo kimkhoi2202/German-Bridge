@@ -28,11 +28,13 @@ export interface Player {
 
 export interface RoundRecord {
   round: number;
+  tricksTotal?: number;
   trump: Card;
   bids: number[];
   won: number[];
   scores: number[];
   dealerIdx: number;
+  playLog?: PlayLogEntry[];
 }
 
 export interface PlayLogEntry {
@@ -47,8 +49,10 @@ export interface GameState {
   // ── Match config ────────────────────────────────────────
   players: Player[];
   decks: number;
-  /** Maximum hand size. A match plays scored hands from 1 card up to this value. */
+  /** Maximum hand size. A match plays scored hands up to this value. */
   tricksPerHand: number;
+  /** First hand size in the match ladder. Defaults to 1 for older saved games. */
+  startingTricksPerHand?: number;
   maxRounds: number;
 
   // ── Match progress ──────────────────────────────────────
@@ -75,24 +79,59 @@ export interface GameState {
 export interface MatchConfig {
   players: Player[];
   decks: number;
-  /** Maximum hand size. A match plays scored hands from 1 card up to this value. */
+  /** Maximum hand size. A match plays scored hands up to this value. */
   tricksPerHand: number;
+  /** First hand size in the match ladder. Defaults to 1. */
+  startingTricksPerHand?: number;
   maxRounds: number;
 }
 
-export function tricksForRound(round: number, maxTricksPerHand: number): number {
+export function normalizeStartingTricksPerHand(
+  startingTricksPerHand: number | undefined,
+  maxTricksPerHand: number,
+): number {
+  const normalizedMax = Math.max(1, Math.trunc(maxTricksPerHand));
+  const parsedStart =
+    typeof startingTricksPerHand === "number" && Number.isFinite(startingTricksPerHand)
+      ? Math.trunc(startingTricksPerHand)
+      : 1;
+  return Math.min(normalizedMax, Math.max(1, parsedStart));
+}
+
+export function roundCountForHandLadder(
+  startingTricksPerHand: number | undefined,
+  maxTricksPerHand: number,
+): number {
+  const max = Math.max(1, Math.trunc(maxTricksPerHand));
+  const start = normalizeStartingTricksPerHand(startingTricksPerHand, max);
+  return Math.max(1, max - start + 1);
+}
+
+export function tricksForRound(
+  round: number,
+  maxTricksPerHand: number,
+  startingTricksPerHand = 1,
+): number {
   const normalizedRound = Math.max(1, Math.trunc(round));
   const normalizedMax = Math.max(1, Math.trunc(maxTricksPerHand));
-  return Math.min(normalizedRound, normalizedMax);
+  const normalizedStart = normalizeStartingTricksPerHand(startingTricksPerHand, normalizedMax);
+  return Math.min(normalizedStart + normalizedRound - 1, normalizedMax);
 }
 
 /** Build initial game state in the `lobby` phase. */
 export function initialState(config: MatchConfig): GameState {
+  const tricksPerHand = Math.max(1, Math.trunc(config.tricksPerHand));
+  const startingTricksPerHand = normalizeStartingTricksPerHand(
+    config.startingTricksPerHand,
+    tricksPerHand,
+  );
+  const ladderRounds = roundCountForHandLadder(startingTricksPerHand, tricksPerHand);
   return {
     players: config.players,
     decks: config.decks,
-    tricksPerHand: config.tricksPerHand,
-    maxRounds: Math.max(1, Math.min(config.maxRounds, config.tricksPerHand)),
+    tricksPerHand,
+    startingTricksPerHand,
+    maxRounds: Math.max(1, Math.min(config.maxRounds, ladderRounds)),
     phase: "lobby",
     round: 0,
     dealerIdx: 0,
@@ -140,14 +179,23 @@ export function startRound(
   rng: () => number = Math.random,
 ): GameState {
   const { players, decks, tricksPerHand } = state;
+  const startingTricksPerHand = normalizeStartingTricksPerHand(
+    state.startingTricksPerHand,
+    tricksPerHand,
+  );
   const max = maxTricks(players.length, decks);
   if (tricksPerHand > max || tricksPerHand < 1) {
     throw new Error(
       `Invalid tricksPerHand=${tricksPerHand} for players=${players.length}, decks=${decks} (max ${max}).`,
     );
   }
+  if (startingTricksPerHand > tricksPerHand || startingTricksPerHand < 1) {
+    throw new Error(
+      `Invalid startingTricksPerHand=${startingTricksPerHand} for tricksPerHand=${tricksPerHand}.`,
+    );
+  }
   const nextRoundNumber = state.round + 1;
-  const tricksThisHand = tricksForRound(nextRoundNumber, tricksPerHand);
+  const tricksThisHand = tricksForRound(nextRoundNumber, tricksPerHand, startingTricksPerHand);
   const dealerIdx = state.round === 0
     ? randomSeatIndex(players.length, rng)
     : state.dealerIdx;
@@ -172,6 +220,7 @@ export function startRound(
     phase: "dealing",
     round: nextRoundNumber,
     dealerIdx,
+    startingTricksPerHand,
     hands,
     trumpCard,
     tricksTotal: tricksThisHand,
@@ -331,11 +380,13 @@ function finalizeRound(state: GameState): GameState {
   const scores = bids.map((b, i) => scoreFn(b, state.won[i]));
   const record: RoundRecord = {
     round: state.round,
+    tricksTotal: state.tricksTotal,
     trump: state.trumpCard!,
     bids,
     won: [...state.won],
     scores,
     dealerIdx: state.dealerIdx,
+    playLog: state.playLog.map((entry) => ({ ...entry })),
   };
   return { ...state, history: [...state.history, record], phase: "round-end" };
 }

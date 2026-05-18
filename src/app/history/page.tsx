@@ -90,7 +90,11 @@ function HistoryContent() {
                       <div className="gb-history-meta mono">
                         {new Date(finishedAt).toLocaleString()} · {row.game.playerCount} players ·{" "}
                         {row.game.decks} deck{row.game.decks > 1 ? "s" : ""} ·{" "}
-                        {formatHandLadder(row.game.tricksPerHand, row.game.maxRounds)}
+                        {formatHandLadder(
+                          row.game.tricksPerHand,
+                          row.game.maxRounds,
+                          row.game.startingTricksPerHand ?? 1,
+                        )}
                       </div>
                     </div>
                     <div className="eyebrow">{isOpen ? "Close" : "Details"}</div>

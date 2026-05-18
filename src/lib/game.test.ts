@@ -82,6 +82,24 @@ describe("startRound", () => {
     expect(s1.round).toBe(1);
   });
 
+  it("supports starting the hand ladder above one card", () => {
+    const s0 = initialState({
+      ...baseConfig,
+      startingTricksPerHand: 2,
+      tricksPerHand: 4,
+      maxRounds: 3,
+    });
+    const s1 = startRound(s0, seededRng(11));
+    expect(s1.startingTricksPerHand).toBe(2);
+    expect(s1.maxRounds).toBe(3);
+    expect(s1.tricksTotal).toBe(2);
+    s1.hands.forEach((h) => expect(h).toHaveLength(2));
+
+    const s2 = nextRound({ ...s1, phase: "round-end" }, seededRng(12));
+    expect(s2.tricksTotal).toBe(3);
+    s2.hands.forEach((h) => expect(h).toHaveLength(3));
+  });
+
   it("randomizes the initial dealer, starts bidding with dealer, then starts play after dealer", () => {
     const s0 = initialState(baseConfig);
     const s1 = startRound(s0, rngWithFirst(0.75));
@@ -198,6 +216,7 @@ describe("playCard / settleTrick / round flow", () => {
     expect(record.scores).toHaveLength(4);
     // Sum of tricks won equals tricks dealt
     expect(record.won.reduce((a, b) => a + b, 0)).toBe(s.tricksTotal);
+    expect(record.playLog).toHaveLength(s.tricksTotal * s.players.length);
     // All hands are empty
     s.hands.forEach((h) => expect(h).toHaveLength(0));
     expect(s.playLog).toHaveLength(s.tricksTotal * s.players.length);

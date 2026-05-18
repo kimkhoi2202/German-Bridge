@@ -20,11 +20,23 @@ function clampInt(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-function setupConfig(args: { playerCount: number; decks: number; tricksPerHand: number }) {
+function setupConfig(args: {
+  playerCount: number;
+  decks: number;
+  startingTricksPerHand?: number;
+  tricksPerHand: number;
+}) {
   const playerCount = clampInt(args.playerCount, 3, 12);
   const decks = clampInt(args.decks, 1, MAX_DECKS);
   const tricksPerHand = clampInt(args.tricksPerHand, 1, Math.max(1, maxTricks(playerCount, decks)));
-  return { playerCount, decks, tricksPerHand, maxRounds: tricksPerHand };
+  const startingTricksPerHand = clampInt(args.startingTricksPerHand ?? 1, 1, tricksPerHand);
+  return {
+    playerCount,
+    decks,
+    startingTricksPerHand,
+    tricksPerHand,
+    maxRounds: tricksPerHand - startingTricksPerHand + 1,
+  };
 }
 
 function codeFrom(input: string) {
@@ -33,7 +45,7 @@ function codeFrom(input: string) {
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0).toString(36).toUpperCase().slice(0, 6).padEnd(6, "X");
+  return String((hash >>> 0) % 1_000_000).padStart(6, "0");
 }
 
 async function uniqueInviteCode(ctx: MutationCtx, seed: string) {
@@ -52,6 +64,7 @@ export const create = mutation({
   args: {
     playerCount: v.number(),
     decks: v.number(),
+    startingTricksPerHand: v.optional(v.number()),
     tricksPerHand: v.number(),
     botMood: moodValidator,
   },

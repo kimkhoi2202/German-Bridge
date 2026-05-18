@@ -20,6 +20,7 @@ const settingsFields = {
   animations: v.boolean(),
   defaultPlayers: v.number(),
   defaultDecks: v.number(),
+  defaultStartingTricksPerHand: v.optional(v.number()),
   defaultTricksPerHand: v.number(),
   defaultBotMood: v.union(
     v.literal("cautious"),
@@ -51,6 +52,7 @@ export default defineSchema({
     ),
     playerCount: v.number(),
     decks: v.number(),
+    startingTricksPerHand: v.optional(v.number()),
     tricksPerHand: v.number(),
     maxRounds: v.number(),
     defaultBotMood: v.optional(

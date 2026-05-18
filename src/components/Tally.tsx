@@ -5,6 +5,7 @@ import type { Card } from "@/lib/cards";
 
 export interface TallyRound {
   round: number;
+  tricksTotal?: number;
   trump: Card;
   bids: number[];
   won: number[];
@@ -40,7 +41,11 @@ export function TallyTable({
         <div className="gb-tally-head">
           <div className="gb-tally-cell head">Player</div>
           {history.map((h) => (
-            <div key={h.round} className="gb-tally-cell head round">
+            <div
+              key={h.round}
+              className="gb-tally-cell head round"
+              title={`${h.tricksTotal ?? h.round} card hand`}
+            >
               <span className="r-num">{history.length === 1 ? "Hand" : `H${h.round}`}</span>
               {h.trump && <CardMark card={h.trump} size="xs" />}
             </div>

@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
   animations: true,
   defaultPlayers: 4,
   defaultDecks: 2,
+  defaultStartingTricksPerHand: 1,
   defaultTricksPerHand: 10,
   defaultBotMood: "mixed" as const,
 };
@@ -30,7 +31,7 @@ function clampInt(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-function sanitizeMatchDefaults(players: number, decks: number, tricks: number) {
+function sanitizeMatchDefaults(players: number, decks: number, startingTricks: number | undefined, tricks: number) {
   const defaultPlayers = clampInt(players, 3, 12);
   const defaultDecks = clampInt(decks, 1, MAX_DECKS);
   const defaultTricksPerHand = clampInt(
@@ -38,7 +39,12 @@ function sanitizeMatchDefaults(players: number, decks: number, tricks: number) {
     1,
     Math.max(1, maxTricks(defaultPlayers, defaultDecks)),
   );
-  return { defaultPlayers, defaultDecks, defaultTricksPerHand };
+  const defaultStartingTricksPerHand = clampInt(
+    startingTricks ?? DEFAULT_SETTINGS.defaultStartingTricksPerHand,
+    1,
+    defaultTricksPerHand,
+  );
+  return { defaultPlayers, defaultDecks, defaultStartingTricksPerHand, defaultTricksPerHand };
 }
 
 export const get = query({
@@ -49,7 +55,7 @@ export const get = query({
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
-    return settings ?? { ...DEFAULT_SETTINGS, userId, updatedAt: 0 };
+    return settings ? { ...DEFAULT_SETTINGS, ...settings } : { ...DEFAULT_SETTINGS, userId, updatedAt: 0 };
   },
 });
 
@@ -62,6 +68,7 @@ export const save = mutation({
     animations: v.boolean(),
     defaultPlayers: v.number(),
     defaultDecks: v.number(),
+    defaultStartingTricksPerHand: v.optional(v.number()),
     defaultTricksPerHand: v.number(),
     defaultBotMood: botMood,
   },
@@ -79,7 +86,12 @@ export const save = mutation({
       layout: args.layout,
       showTrumpHints: args.showTrumpHints,
       animations: args.animations,
-      ...sanitizeMatchDefaults(args.defaultPlayers, args.defaultDecks, args.defaultTricksPerHand),
+      ...sanitizeMatchDefaults(
+        args.defaultPlayers,
+        args.defaultDecks,
+        args.defaultStartingTricksPerHand,
+        args.defaultTricksPerHand,
+      ),
       defaultBotMood: args.defaultBotMood,
       updatedAt: Date.now(),
     };

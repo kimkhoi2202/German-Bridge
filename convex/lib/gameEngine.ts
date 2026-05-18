@@ -95,6 +95,7 @@ export function createStartedState(args: {
   const config: MatchConfig = {
     players: playersFromParticipants(args.participants),
     decks: args.game.decks,
+    startingTricksPerHand: args.game.startingTricksPerHand ?? 1,
     tricksPerHand: args.game.tricksPerHand,
     maxRounds: args.game.maxRounds,
   };
@@ -226,13 +227,23 @@ export function redactedStateForViewer(state: GameState, viewerSeatIdx: number):
       ...entry,
       playerIdx: remapIndex(entry.playerIdx, viewerSeatIdx, playerCount),
     })),
-    history: state.history.map((round) => ({
-      ...round,
-      bids: remapArray(round.bids, viewerSeatIdx),
-      won: remapArray(round.won, viewerSeatIdx),
-      scores: remapArray(round.scores, viewerSeatIdx),
-      dealerIdx: remapIndex(round.dealerIdx, viewerSeatIdx, playerCount),
-    })),
+    history: state.history.map((round) => {
+      const redactedRound = {
+        ...round,
+        bids: remapArray(round.bids, viewerSeatIdx),
+        won: remapArray(round.won, viewerSeatIdx),
+        scores: remapArray(round.scores, viewerSeatIdx),
+        dealerIdx: remapIndex(round.dealerIdx, viewerSeatIdx, playerCount),
+      };
+      if (!round.playLog) return redactedRound;
+      return {
+        ...redactedRound,
+        playLog: round.playLog.map((entry) => ({
+          ...entry,
+          playerIdx: remapIndex(entry.playerIdx, viewerSeatIdx, playerCount),
+        })),
+      };
+    }),
   };
 }
 

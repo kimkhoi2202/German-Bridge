@@ -7,6 +7,7 @@ import type { Personality } from "@/lib/bot";
 import {
   clampDecks,
   clampPlayers,
+  clampStartingTricksPerHand,
   clampTricksPerHand,
   sanitizePersonality,
   sanitizePlayerName,
@@ -34,6 +35,7 @@ export interface Settings {
   // Default match config used by the lobby.
   defaultPlayers: number;
   defaultDecks: number;
+  defaultStartingTricksPerHand: number;
   defaultTricksPerHand: number;
   defaultBotMood: Personality;
   /** Display name for the human player. */
@@ -53,6 +55,7 @@ const DEFAULTS: Settings = {
   animations: true,
   defaultPlayers: 4,
   defaultDecks: 2,
+  defaultStartingTricksPerHand: 1,
   defaultTricksPerHand: 10,
   defaultBotMood: "mixed",
   playerName: "You",
@@ -86,6 +89,11 @@ export function sanitizeSettings(value: Partial<Settings> | undefined): Settings
     defaultDecks,
     DEFAULTS.defaultTricksPerHand,
   );
+  const defaultStartingTricksPerHand = clampStartingTricksPerHand(
+    value?.defaultStartingTricksPerHand,
+    defaultTricksPerHand,
+    DEFAULTS.defaultStartingTricksPerHand,
+  );
 
   return {
     theme: oneOf(migratedTheme(value?.theme), THEMES, DEFAULTS.theme),
@@ -95,6 +103,7 @@ export function sanitizeSettings(value: Partial<Settings> | undefined): Settings
     animations: bool(value?.animations, DEFAULTS.animations),
     defaultPlayers,
     defaultDecks,
+    defaultStartingTricksPerHand,
     defaultTricksPerHand,
     defaultBotMood: sanitizePersonality(value?.defaultBotMood, DEFAULTS.defaultBotMood),
     playerName: sanitizePlayerName(value?.playerName, DEFAULTS.playerName),
@@ -111,7 +120,7 @@ export const useSettings = create<Settings & SettingsActions>()(
     }),
     {
       name: "gb-settings",
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const value = persisted as Partial<Settings> | undefined;
         return sanitizeSettings(value);
