@@ -22,17 +22,23 @@ import {
   type GptBridgeDecision,
 } from "../src/lib/ai/gptBridgeBot";
 import {
+  nextGptBridgeMemory,
+  type GptBridgeMemory,
+} from "../src/lib/ai/gptBridgeMemory";
+import {
   customLlmBridgeStrategyCard,
   getLlmBridgeStrategyCard,
 } from "../src/lib/ai/llmStrategyCards";
 import {
   appendAiDecisionTrace,
   appendEvent,
+  getAiBotMemory,
   getGameOrThrow,
   getParticipantForUser,
   getParticipants,
   getStateOrThrow,
   requireParticipant,
+  writeAiBotMemory,
   writeGameState,
 } from "./lib/db";
 import {
@@ -459,7 +465,7 @@ export const botTurn = internalMutation({
   },
 });
 
-type PendingGptBotTurnResult = { state: GameState } | null;
+type PendingGptBotTurnResult = { state: GameState; memory: GptBridgeMemory | null } | null;
 type ApplyGptBotTurnResult = { sequence: number } | null;
 
 export const pendingGptBotTurn = internalQuery({
@@ -475,7 +481,10 @@ export const pendingGptBotTurn = internalQuery({
       .unique();
     const state = stateDoc?.state as GameState | undefined;
     if (!state || !isGptBotTurn(state)) return null;
-    return { state };
+    const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+    const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
+    const memory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
+    return { state, memory };
   },
 });
 
@@ -501,6 +510,7 @@ export const applyGptBotTurn = internalMutation({
     let nextState: GameState | null = null;
     let event: { type: string; seatIdx: number; payload: unknown } | null = null;
     let aiTrace: BotTurnTrace | null = null;
+    let nextMemory: GptBridgeMemory | null = null;
     let fallbackReason = args.fallbackReason ?? null;
 
     if (args.decision) {
@@ -508,6 +518,9 @@ export const applyGptBotTurn = internalMutation({
         const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
         const observation = createObservation(state, seatIdx);
         const decision = validateGptBridgeDecision(observation, args.decision as GptBridgeDecision);
+        const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
+        const previousMemory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
+        nextMemory = nextGptBridgeMemory(previousMemory, observation, decision);
         const trace = gptBridgeDecisionToTrace(observation, decision, {
           model: args.model,
           reasoningEffort: args.reasoningEffort,
@@ -584,6 +597,9 @@ export const applyGptBotTurn = internalMutation({
 
     state = nextState;
     await writeGameState(ctx, game._id, state);
+    if (nextMemory && aiTrace) {
+      await writeAiBotMemory(ctx, game._id, aiTrace.seatIdx, nextMemory);
+    }
     const sequence = await appendEvent(ctx, game, event);
     await appendAiDecisionTrace(ctx, {
       gameId: game._id,
@@ -694,7 +710,7 @@ export const gptBotTurn = internalAction({
         headers,
         body: JSON.stringify({
           model,
-          input: buildGptBridgeInput(observation, { strategy }),
+          input: buildGptBridgeInput(observation, { strategy, memory: pending.memory }),
           reasoning: { effort: reasoningEffort },
           text: { format: buildGptBridgeTextFormat(observation), verbosity: "low" },
           max_output_tokens: maxOutputTokens,

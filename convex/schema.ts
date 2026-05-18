@@ -145,6 +145,16 @@ export default defineSchema({
     .index("by_gameId_and_sequence", ["gameId", "sequence"])
     .index("by_gameId", ["gameId"]),
 
+  aiBotMemories: defineTable({
+    gameId: v.id("games"),
+    seatIdx: v.number(),
+    round: v.number(),
+    memory: v.any(),
+    updatedAt: v.number(),
+  })
+    .index("by_gameId_and_seatIdx", ["gameId", "seatIdx"])
+    .index("by_gameId", ["gameId"]),
+
   gamePresence: defineTable({
     gameId: v.id("games"),
     userId: v.id("users"),

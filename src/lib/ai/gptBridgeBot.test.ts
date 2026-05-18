@@ -28,6 +28,8 @@ function observation(overrides: Partial<BotObservation> = {}): BotObservation {
       { id: "p3", name: "P3", isHuman: false, personality: "cautious" },
     ],
     decks: 1,
+    round: 1,
+    maxRounds: 4,
     tricksPerHand: 4,
     tricksTotal: 2,
     phase: "bidding",
@@ -41,6 +43,7 @@ function observation(overrides: Partial<BotObservation> = {}): BotObservation {
     leadIdx: 0,
     turnIdx: 1,
     bidTurn: 1,
+    trickIdx: 0,
     legalBids: [0, 1, 2],
     legalCards: hand,
     remainingHandCounts: [2, 2, 2, 2],
@@ -75,6 +78,8 @@ describe("gptBridgeBot compact protocol", () => {
     expect(input[1]?.content).toContain("Final answer format: exactly B:<legalBid>");
     expect(input[1]?.content).toContain("shape=tr");
     expect(input[1]?.content).toContain("mid6-T");
+    expect(input[1]?.content).toContain("handNo=1/4");
+    expect(input[1]?.content).toContain("privateThread=none");
     expect(input[1]?.content).toContain("bidctx=");
     expect(input[1]?.content).toContain("needs:");
     expect(input[1]?.content).toContain("tablesignals:");
@@ -111,12 +116,45 @@ describe("gptBridgeBot compact protocol", () => {
       }),
     );
     expect(playInput[1]?.content).toContain("Private play process");
+    expect(playInput[1]?.content).toContain("Use privateThread as your own hand memory");
     expect(playInput[1]?.content).toContain("cardlens=");
     expect(playInput[1]?.content).toContain("nowWin");
     expect(playInput[1]?.content).toContain("opponent needs");
     expect(playInput[1]?.content).toContain("Never lead trump by habit");
     expect(playInput[1]?.content).toContain("never auto-play strongest trump");
     expect(playInput[1]?.content).toContain("preserve trump for endgame control");
+  });
+
+  it("injects persistent hand memory when available", () => {
+    const input = buildGptBridgeInput(
+      observation({
+        phase: "playing",
+        bids: [1, 2, 0, 1],
+        won: [0, 1, 0, 0],
+        legalCards: [C("A", "s", 0, "a"), C("3", "h", 0, "b")],
+      }),
+      {
+        memory: {
+          version: 1,
+          round: 1,
+          seatIdx: 1,
+          targetBid: 2,
+          mode: "protect-flex",
+          plan: "target 2; preserve ace unless it has a named purpose",
+          carryover: [],
+          winPaths: ["As-0-a(ASd1)"],
+          protectedCards: ["As-0-a(ASd1)"],
+          flexibleLosers: ["3h-0-b(3Hd1)"],
+          dangerCards: ["As-0-a(ASd1)"],
+          spentCards: [],
+          recentDecisions: ["h1: bid 2"],
+        },
+      },
+    );
+    expect(input[1]?.content).toContain("privateThread=v1");
+    expect(input[1]?.content).toContain("target=b2/w1/need1");
+    expect(input[1]?.content).toContain("preserve ace");
+    expect(input[1]?.content).toContain("h1: bid 2");
   });
 
   it("can inject the forced-winner table-police strategy mutation", () => {

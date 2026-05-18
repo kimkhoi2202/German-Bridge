@@ -11,6 +11,10 @@ import {
   getLlmBridgeStrategyCard,
   type LlmBridgeStrategyCard,
 } from "./llmStrategyCards";
+import {
+  formatGptBridgeMemoryForPrompt,
+  type GptBridgeMemory,
+} from "./gptBridgeMemory";
 
 export const DEFAULT_GPT_BRIDGE_MODEL = "gpt-5.5";
 export const DEFAULT_GPT_BRIDGE_REASONING_EFFORT = "none";
@@ -42,6 +46,7 @@ type ParsedDecision = Partial<GptBridgeDecision> & Record<string, unknown>;
 
 export interface GptBridgePromptOptions {
   strategy?: LlmBridgeStrategyCard | null;
+  memory?: GptBridgeMemory | null;
 }
 
 function cardLabel(card: Card) {
@@ -279,6 +284,8 @@ function expertDoctrine(observation: BotObservation) {
   return [
     "Private play process: compare legal cards by expected final score. First protect your own exact bid, then use opponent needs, voids, and current trick pressure to break their exact bids.",
     "Use table signals in real time: players below target need wins, at-target players fear extra tricks, and over-target players want to dump danger.",
+    "Use privateThread as your own hand memory. It is not a hard script, but it is your prior plan and decision chain; update your choice from the live state instead of starting from scratch.",
+    "Do not simplify high-card timing into always early or always late. Aces and kings in two-deck/crowded games are uncertain: play them early only to test, lock, or force a needed line; otherwise preserve them for late control when that keeps your bid reachable.",
     "Use tacticalmode as a tie-breaker so your play is not predictable.",
     "Never lead trump by habit and never auto-play strongest trump. Lead or burn trump only with a named purpose: drain a likely trump bidder, bully a specific target, protect your bid, or prevent a bigger exact score. Otherwise preserve trump for endgame control.",
     "Weak trump can lose to stronger trump later. If a low trump is your only path, treat it as pressure or sacrifice unless the table proves it will hold.",
@@ -357,8 +364,10 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     `seat=p${observation.playerIdx}(${player?.name ?? `Player ${observation.playerIdx}`})`,
     `players=${observation.playerCount}`,
     `decks=${observation.decks}`,
+    `handNo=${observation.round}/${observation.maxRounds}`,
     `tricks=${observation.tricksTotal}`,
     `trump=${trump}`,
+    `trickNo=${observation.trickIdx + 1}/${observation.tricksTotal}`,
     `lead=p${observation.leadIdx}`,
     `turn=p${observation.turnIdx}`,
     `bidTurn=p${observation.bidTurn}`,
@@ -369,6 +378,7 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     `tablesignals:${compactTableSignals(observation)}`,
     compactTrumpLens(observation),
     compactTacticalMode(observation),
+    formatGptBridgeMemoryForPrompt(options.memory, observation),
     `remaining=${observation.remainingHandCounts.join(",")}`,
     `players:${players}`,
     compactHandShape(observation),

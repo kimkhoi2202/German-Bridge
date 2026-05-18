@@ -40,6 +40,8 @@ export interface BotObservation {
   playerCount: number;
   players: PublicPlayer[];
   decks: number;
+  round: number;
+  maxRounds: number;
   tricksPerHand: number;
   tricksTotal: number;
   phase: Phase;
@@ -53,6 +55,7 @@ export interface BotObservation {
   leadIdx: number;
   turnIdx: number;
   bidTurn: number;
+  trickIdx: number;
   legalBids: number[];
   legalCards: Card[];
   remainingHandCounts: number[];
@@ -91,6 +94,8 @@ export function createObservation(state: GameState, playerIdx: number): BotObser
       personality: p.personality,
     })),
     decks: state.decks,
+    round: state.round,
+    maxRounds: state.maxRounds,
     tricksPerHand: state.tricksPerHand,
     tricksTotal: state.tricksTotal,
     phase: state.phase,
@@ -104,6 +109,7 @@ export function createObservation(state: GameState, playerIdx: number): BotObser
     leadIdx: state.leadIdx,
     turnIdx: state.turnIdx,
     bidTurn: state.bidTurn,
+    trickIdx: state.trickIdx,
     legalBids: legalBidsFor(state, playerIdx),
     legalCards: legalCardsFor(state, playerIdx),
     remainingHandCounts: state.hands.map((hand) => hand.length),

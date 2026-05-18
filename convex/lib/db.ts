@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { GameState } from "../../src/lib/game";
 import type { BotDecisionTrace, Personality } from "../../src/lib/bot";
 import type { BotObservation } from "../../src/lib/botObservation";
+import type { GptBridgeMemory } from "../../src/lib/ai/gptBridgeMemory";
 
 export async function getGameOrThrow(ctx: QueryCtx | MutationCtx, gameId: Id<"games">) {
   const game = await ctx.db.get(gameId);
@@ -114,6 +115,42 @@ export async function appendAiDecisionTrace(
     ...(args.decision.checkpointId !== undefined ? { checkpointId: args.decision.checkpointId } : {}),
     ...(args.decision.fallbackReason !== undefined ? { fallbackReason: args.decision.fallbackReason } : {}),
     ...(args.decision.heuristic !== undefined ? { heuristic: args.decision.heuristic } : {}),
+  });
+}
+
+export async function getAiBotMemory(
+  ctx: QueryCtx | MutationCtx,
+  gameId: Id<"games">,
+  seatIdx: number,
+) {
+  return await ctx.db
+    .query("aiBotMemories")
+    .withIndex("by_gameId_and_seatIdx", (q) => q.eq("gameId", gameId).eq("seatIdx", seatIdx))
+    .unique();
+}
+
+export async function writeAiBotMemory(
+  ctx: MutationCtx,
+  gameId: Id<"games">,
+  seatIdx: number,
+  memory: GptBridgeMemory,
+) {
+  const now = Date.now();
+  const existing = await getAiBotMemory(ctx, gameId, seatIdx);
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      round: memory.round,
+      memory,
+      updatedAt: now,
+    });
+    return existing._id;
+  }
+  return await ctx.db.insert("aiBotMemories", {
+    gameId,
+    seatIdx,
+    round: memory.round,
+    memory,
+    updatedAt: now,
   });
 }
 
