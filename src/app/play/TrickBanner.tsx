@@ -15,7 +15,7 @@ export function TrickBanner({ state: stateProp }: { state?: GameState | null }) 
 
   return (
     <div className="gb-trick-banner">
-      <span>Trick to</span>
+      <span>Cards won by</span>
       <b>{winner.name}</b>
     </div>
   );

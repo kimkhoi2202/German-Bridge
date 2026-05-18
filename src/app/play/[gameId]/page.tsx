@@ -17,7 +17,11 @@ import { MatchEnd } from "../MatchEnd";
 import { TrickBanner } from "../TrickBanner";
 import { useGameViewportLock } from "../../useGameViewportLock";
 import { useSettings } from "@/store/settings";
-import { canSendPlayCardIntent } from "./playCardIntent";
+import {
+  canKeepPreMoveIntent,
+  canQueuePreMoveIntent,
+  canSendPlayCardIntent,
+} from "./playCardIntent";
 
 const MOODS: { id: Personality; label: string }[] = [
   { id: "cautious", label: "Cautious" },
@@ -47,13 +51,20 @@ function LiveGameContent() {
   const playCard = useMutation(api.games.playCard);
   const advanceRound = useMutation(api.games.advanceRound);
   const touchPresence = useMutation(api.games.touchPresence);
+  const nudgeAutoTurn = useMutation(api.games.nudgeAutoTurn);
   const cardBack = useSettings((s) => s.cardBack);
   const layout = useSettings((s) => s.layout);
   const [botMood, setBotMood] = useState<Personality>("mixed");
   const [error, setError] = useState<string | null>(null);
+  const [pendingBid, setPendingBid] = useState(false);
+  const [pendingAdvance, setPendingAdvance] = useState(false);
   const [pendingPlayCardKey, setPendingPlayCardKey] = useState<string | null>(null);
+  const [preMoveCardKey, setPreMoveCardKey] = useState<string | null>(null);
+  const pendingBidSequenceRef = useRef<number | null>(null);
+  const pendingAdvanceSequenceRef = useRef<number | null>(null);
   const pendingPlayRef = useRef(false);
   const pendingPlaySequenceRef = useRef<number | null>(null);
+  const autoTurnNudgeRef = useRef<string | null>(null);
   useGameViewportLock();
 
   useEffect(() => {
@@ -72,6 +83,68 @@ function LiveGameContent() {
       setBotMood(data.game.defaultBotMood);
     }
   }, [data?.game.defaultBotMood, data?.game.status]);
+
+  useEffect(() => {
+    if (!data || data.game.status !== "active" || !data.state) return;
+    const state = data.state;
+    const activePlayer =
+      state.phase === "bidding"
+        ? state.players[state.bidTurn]
+        : state.phase === "playing" && state.trickWinner == null
+          ? state.players[state.turnIdx]
+          : null;
+    const shouldNudge =
+      state.phase === "dealing" ||
+      state.phase === "trump" ||
+      state.phase === "trick-end" ||
+      (activePlayer?.isHuman === false && (state.phase === "bidding" || state.phase === "playing"));
+
+    if (!shouldNudge) return;
+
+    const nudgeKey = [
+      data.game.sequence,
+      state.phase,
+      state.round,
+      state.trickIdx,
+      state.bidTurn,
+      state.turnIdx,
+      state.trickWinner ?? "none",
+    ].join(":");
+    if (autoTurnNudgeRef.current === nudgeKey) return;
+    autoTurnNudgeRef.current = nudgeKey;
+
+    const delay = state.phase === "bidding" || state.phase === "playing" ? 1600 : 2200;
+    const timer = window.setTimeout(() => {
+      void nudgeAutoTurn({ gameId }).catch(() => {});
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    data,
+    gameId,
+    nudgeAutoTurn,
+  ]);
+
+  useEffect(() => {
+    if (!pendingBid) return;
+    const sequenceAtClick = pendingBidSequenceRef.current;
+    if (sequenceAtClick == null || data?.game.sequence !== sequenceAtClick) {
+      pendingBidSequenceRef.current = null;
+      setPendingBid(false);
+    }
+  }, [data?.game.sequence, pendingBid]);
+
+  useEffect(() => {
+    if (!pendingAdvance) return;
+    const sequenceAtClick = pendingAdvanceSequenceRef.current;
+    if (
+      sequenceAtClick == null ||
+      data?.game.sequence !== sequenceAtClick ||
+      data?.state?.phase !== "round-end"
+    ) {
+      pendingAdvanceSequenceRef.current = null;
+      setPendingAdvance(false);
+    }
+  }, [data?.game.sequence, data?.state?.phase, pendingAdvance]);
 
   useEffect(() => {
     if (!pendingPlayRef.current) return;
@@ -102,6 +175,21 @@ function LiveGameContent() {
     }
   }
 
+  async function handleBid(bid: number) {
+    if (pendingBid || data?.state?.phase !== "bidding") return;
+    pendingBidSequenceRef.current = data.game.sequence;
+    setPendingBid(true);
+    setError(null);
+
+    try {
+      await placeBid({ gameId, bid });
+    } catch (err) {
+      pendingBidSequenceRef.current = null;
+      setPendingBid(false);
+      setError(err instanceof Error ? err.message : "Action failed");
+    }
+  }
+
   async function handlePlayCard(card: Card) {
     if (
       !canSendPlayCardIntent({
@@ -120,11 +208,69 @@ function LiveGameContent() {
     setError(null);
 
     try {
+      setPreMoveCardKey(null);
       await playCard({ gameId, cardKey: card.key });
     } catch (err) {
       pendingPlayRef.current = false;
       pendingPlaySequenceRef.current = null;
       setPendingPlayCardKey(null);
+      setError(err instanceof Error ? err.message : "Action failed");
+    }
+  }
+
+  function handlePreMoveCard(card: Card | null) {
+    if (!card) {
+      setPreMoveCardKey(null);
+      return;
+    }
+    if (
+      !canQueuePreMoveIntent({
+        state: data?.state,
+        card,
+        isPlayInFlight: pendingPlayRef.current,
+      })
+    ) {
+      return;
+    }
+    setError(null);
+    setPreMoveCardKey((current) => (current === card.key ? null : card.key));
+  }
+
+  useEffect(() => {
+    if (!preMoveCardKey) return;
+    const card = data?.state?.hands[0]?.find((handCard) => handCard.key === preMoveCardKey);
+    if (
+      !card ||
+      !canSendPlayCardIntent({
+        state: data?.state,
+        legalCardKeys: data?.legalCardKeys,
+        card,
+        isPlayInFlight: pendingPlayRef.current,
+      })
+    ) {
+      return;
+    }
+
+    void handlePlayCard(card);
+  }, [data?.game.sequence, data?.legalCardKeys, data?.state, preMoveCardKey]);
+
+  useEffect(() => {
+    if (!preMoveCardKey) return;
+    if (canKeepPreMoveIntent({ state: data?.state, cardKey: preMoveCardKey })) return;
+    setPreMoveCardKey(null);
+  }, [data?.game.sequence, data?.state, preMoveCardKey]);
+
+  async function handleAdvanceRound() {
+    if (pendingAdvance || data?.state?.phase !== "round-end") return;
+    pendingAdvanceSequenceRef.current = data.game.sequence;
+    setPendingAdvance(true);
+    setError(null);
+
+    try {
+      await advanceRound({ gameId });
+    } catch (err) {
+      pendingAdvanceSequenceRef.current = null;
+      setPendingAdvance(false);
       setError(err instanceof Error ? err.message : "Action failed");
     }
   }
@@ -242,9 +388,12 @@ function LiveGameContent() {
     <div className="gb-play-screen relative" data-cardback={cardBack} data-layout={layout}>
       <TableView
         state={data.state}
-        onBid={(bid) => run(() => placeBid({ gameId, bid }))}
+        onBid={handleBid}
         onPlay={handlePlayCard}
+        onPreMove={handlePreMoveCard}
         cardPlayDisabled={pendingPlayCardKey != null}
+        bidSubmitting={pendingBid}
+        preMoveCardKey={preMoveCardKey}
         onAbandon={() => run(async () => {
           await endRoom({ gameId });
           router.push("/");
@@ -252,7 +401,11 @@ function LiveGameContent() {
       />
       <TrickBanner state={data.state} />
       {data.state.phase === "round-end" && (
-        <RoundSummary state={data.state} onAdvance={() => run(() => advanceRound({ gameId }))} />
+        <RoundSummary
+          state={data.state}
+          isAdvancing={pendingAdvance}
+          onAdvance={handleAdvanceRound}
+        />
       )}
       {data.state.phase === "match-end" && (
         <MatchEnd
