@@ -37,7 +37,6 @@ function HistoryContent() {
   return (
     <div className="gb-lobby gb-history-page">
       <div className="gb-history-shell">
-        <div className="eyebrow">German Bridge</div>
         <h1 className="gb-history-title">History</h1>
 
         {isLoading && (
@@ -237,7 +236,7 @@ function AiDebugPanel({
                 <div className="gb-ai-debug-row-main">
                   <span className="eyebrow">
                     {trace.phase === "bidding" ? "Bid" : "Play"} · R{trace.round}
-                    {trace.phase === "playing" ? ` T${trace.trickIdx + 1}` : ""}
+                    {trace.phase === "playing" ? ` Card ${trace.trickIdx + 1}` : ""}
                   </span>
                   <strong>{playerNames[trace.seatIdx] ?? `Seat ${trace.seatIdx + 1}`}</strong>
                   <span>chose {formatAction(trace.chosenAction)}</span>

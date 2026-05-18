@@ -143,24 +143,25 @@ function SettingsContent() {
   return (
     <div className="gb-settings-page">
       <div className="gb-settings-inner">
-        <div className="eyebrow">German Bridge</div>
         <h1 className="gb-history-title">Settings</h1>
 
         <div className="gb-settings-shell">
           <div className="gb-settings-content">
             <Section id="profile" title="Profile">
-              <Field label="Display name">
-                <input
-                  className="gb-settings-input"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  onBlur={() => updateProfile({ displayName }).catch((err) => setError(String(err)))}
-                  maxLength={24}
-                />
-              </Field>
-              <Button color="tertiary" size="md" onClick={() => signOut()}>
-                Sign out
-              </Button>
+              <div className="gb-profile-control-row">
+                <Field label="Display name">
+                  <input
+                    className="gb-settings-input"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    onBlur={() => updateProfile({ displayName }).catch((err) => setError(String(err)))}
+                    maxLength={24}
+                  />
+                </Field>
+                <Button color="tertiary" size="md" className="gb-settings-signout" onClick={() => signOut()}>
+                  Sign out
+                </Button>
+              </div>
               {stats && (
                 <div className="gb-history-score-grid">
                   <Stat label="Games" value={stats.gamesPlayed} />
@@ -209,7 +210,12 @@ function SettingsContent() {
                     />
                   </div>
                   <Field label="Default bot style">
-                    <Segmented value={draft.defaultBotMood} options={MOODS} onChange={(value) => update("defaultBotMood", value)} />
+                    <Segmented
+                      value={draft.defaultBotMood}
+                      options={MOODS}
+                      onChange={(value) => update("defaultBotMood", value)}
+                      className="gb-bot-style-segmented"
+                    />
                   </Field>
                 </Section>
                 {error && <div className="gb-auth-error">{error}</div>}
@@ -255,13 +261,15 @@ function Segmented<T extends string>({
   value,
   options,
   onChange,
+  className,
 }: {
   value: T;
   options: { id: T; label: string }[];
   onChange: (value: T) => void;
+  className?: string;
 }) {
   return (
-    <div className="gb-segmented" role="radiogroup">
+    <div className={className ? `gb-segmented ${className}` : "gb-segmented"} role="radiogroup">
       {options.map((option) => (
         <button
           type="button"
