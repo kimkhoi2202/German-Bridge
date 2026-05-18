@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { humanSeatPos, seatPos } from "./tableLayout";
-import { TableView } from "./Table";
+import {
+  LANDING_IMPACT_TOTAL_MS,
+  cardFlightCompletionHoldMs,
+  shouldShowLandingImpact,
+  TableView,
+  TRICK_COLLECT_SETTLE_DELAY_MS,
+} from "./Table";
 import type { Card } from "@/lib/cards";
 import type { GameState, Player } from "@/lib/game";
 
@@ -12,6 +18,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("./BiddingDial", () => ({
   BiddingDial: () => null,
 }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const players: Player[] = [
   { id: "you", name: "You", isHuman: true, personality: "mixed" },
@@ -57,6 +67,30 @@ function trickCardByAltText(altText: string): HTMLElement {
   const trickCard = screen.getByAltText(altText).closest(".gb-trick-card");
   expect(trickCard).not.toBeNull();
   return trickCard as HTMLElement;
+}
+
+function trickPlay(playerIdx: number, card: Card, order: number) {
+  return {
+    playerIdx,
+    card,
+    order,
+    playKey: `1:0:${order}:${playerIdx}:${card.key}`,
+  };
+}
+
+function mockPrimaryTapPreMove(matches: boolean) {
+  const mediaQuery = {
+    matches,
+    media: "(hover: none), (pointer: coarse)",
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  } satisfies Partial<MediaQueryList>;
+
+  vi.stubGlobal("matchMedia", vi.fn(() => mediaQuery));
 }
 
 describe("seatPos", () => {
@@ -182,7 +216,7 @@ describe("seatPos", () => {
     confirmSpy.mockRestore();
   });
 
-  it("offers pre-move on out-of-turn cards before the lead suit is known", () => {
+  it("offers desktop pre-move on right-click before the lead suit is known", () => {
     const handlePreMove = vi.fn();
     const { container } = render(
       <TableView
@@ -190,14 +224,58 @@ describe("seatPos", () => {
         onPreMove={handlePreMove}
       />,
     );
-    const card = screen.getByRole("button", { name: "Tap to pre-move A of Spades" });
+    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
 
-    expect(card).toHaveAttribute("title", "Tap to pre-move");
+    expect(card).toHaveAttribute("title", "Right-click to pre-move");
     expect(card).toHaveClass("pre-move-selectable");
     expect(card).not.toBeDisabled();
     expect(container.querySelectorAll(".gb-hero-card.pre-move-selectable")).toHaveLength(2);
 
     fireEvent.click(card);
+
+    expect(handlePreMove).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(card);
+
+    expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("keeps tap-to-pre-move available on touch devices", async () => {
+    mockPrimaryTapPreMove(true);
+    const handlePreMove = vi.fn();
+    render(
+      <TableView
+        state={tableState({ hands: [[kingHearts, aceSpades], [], []], turnIdx: 1 })}
+        onPreMove={handlePreMove}
+      />,
+    );
+    const card = await screen.findByRole("button", { name: "Tap to pre-move A of Spades" });
+
+    expect(card).toHaveAttribute("title", "Tap to pre-move");
+
+    fireEvent.pointerDown(card, { button: 0, pointerType: "touch" });
+    fireEvent.click(card);
+
+    expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("does not pre-move from a mouse left-click even when the browser reports touch support", async () => {
+    mockPrimaryTapPreMove(true);
+    const handlePreMove = vi.fn();
+    render(
+      <TableView
+        state={tableState({ hands: [[kingHearts, aceSpades], [], []], turnIdx: 1 })}
+        onPreMove={handlePreMove}
+      />,
+    );
+    const card = await screen.findByRole("button", { name: "Tap to pre-move A of Spades" });
+
+    fireEvent.pointerDown(card, { button: 0, pointerType: "mouse" });
+    fireEvent.click(card);
+
+    expect(handlePreMove).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(card);
 
     expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
   });
@@ -214,7 +292,7 @@ describe("seatPos", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Tap to pre-move K of Hearts" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Right-click to pre-move K of Hearts" })).toHaveClass(
       "pre-move-selectable",
     );
     expect(screen.getByRole("button", { name: "A of Spades in your hand" })).toBeDisabled();
@@ -236,7 +314,7 @@ describe("seatPos", () => {
     expect(handlePlay).toHaveBeenCalledWith(aceSpades);
   });
 
-  it("right-click still plays a legal card when it is your turn", () => {
+  it("does not play a legal card from desktop right-click when it is your turn", () => {
     const handlePlay = vi.fn();
     render(
       <TableView
@@ -249,7 +327,21 @@ describe("seatPos", () => {
 
     fireEvent.contextMenu(card);
 
-    expect(handlePlay).toHaveBeenCalledWith(aceSpades);
+    expect(handlePlay).not.toHaveBeenCalled();
+  });
+
+  it("marks trump cards with the supplied star svg", () => {
+    const { container } = render(
+      <TableView state={tableState({ hands: [[kingHearts, aceSpades]], turnIdx: 1 })} />,
+    );
+
+    const starPath = container.querySelector(".gb-hero-card.trump .gb-trump-card-star path");
+
+    expect(starPath).toHaveAttribute(
+      "d",
+      "M24 3L28.8937 18.695H45L32.174 28.372L37.2312 44L24 34.3481L10.7688 44L15.826 28.372L3 18.695H19.1063L24 3Z",
+    );
+    expect(starPath).toHaveAttribute("fill", "currentColor");
   });
 
   it("offers next-trick pre-move after the viewer has already played this trick", () => {
@@ -267,12 +359,12 @@ describe("seatPos", () => {
         onPreMove={handlePreMove}
       />,
     );
-    const card = screen.getByRole("button", { name: "Tap to pre-move A of Spades" });
+    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
 
     expect(card).toHaveClass("pre-move-selectable");
     expect(card).not.toBeDisabled();
 
-    fireEvent.click(card);
+    fireEvent.contextMenu(card);
 
     expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
   });
@@ -311,6 +403,35 @@ describe("seatPos", () => {
     expect(container.querySelectorAll(".gb-trick-card.current-winner")).toHaveLength(1);
     expect(trickCardByAltText("A Clubs of playing card")).not.toHaveClass("current-winner");
     expect(trickCardByAltText("2 Spades of playing card")).toHaveClass("current-winner");
+  });
+
+  it("flags a landing impact when a new card beats an existing king-or-higher winner", () => {
+    const previous = [trickPlay(1, kingHearts, 0)];
+    const aceHearts = { r: "A", s: "h", d: 0, key: "Ah-0-test" } satisfies Card;
+    const current = [...previous, trickPlay(2, aceHearts, 1)];
+
+    expect(shouldShowLandingImpact(previous, current, current[1].playKey, "s")).toBe(true);
+  });
+
+  it("does not flag a landing impact for ordinary low-card overtakes", () => {
+    const previous = [trickPlay(1, queenClubs, 0)];
+    const current = [...previous, trickPlay(2, aceClubs, 1)];
+
+    expect(shouldShowLandingImpact(previous, current, current[1].playKey, "s")).toBe(false);
+  });
+
+  it("flags a landing impact when trump beats a king-or-higher lead winner", () => {
+    const previous = [trickPlay(1, aceClubs, 0)];
+    const current = [...previous, trickPlay(2, twoSpades, 1)];
+
+    expect(shouldShowLandingImpact(previous, current, current[1].playKey, "s")).toBe(true);
+  });
+
+  it("keeps impact flights mounted until the landing burst can finish before the collect pause starts", () => {
+    expect(cardFlightCompletionHoldMs(0.34, true)).toBe(LANDING_IMPACT_TOTAL_MS);
+    expect(cardFlightCompletionHoldMs(0.56, true)).toBe(LANDING_IMPACT_TOTAL_MS);
+    expect(cardFlightCompletionHoldMs(0.56, false)).toBe(0);
+    expect(TRICK_COLLECT_SETTLE_DELAY_MS).toBe(500);
   });
 
   it("lets the history modal navigate between completed and current hands", () => {

@@ -11,6 +11,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { useMatch } from "@/store/match";
@@ -19,8 +20,8 @@ import { PlayingCard } from "@/components/PlayingCard";
 import { CardMark } from "@/components/CardMark";
 import { Icon } from "@/components/Icon";
 import { useRouter } from "next/navigation";
-import { SUIT_CHAR, SUIT_NAME, isRed, sortHand, legalCards } from "@/lib/cards";
-import type { Card } from "@/lib/cards";
+import { SUIT_CHAR, SUIT_NAME, isRed, rankVal, sortHand, legalCards } from "@/lib/cards";
+import type { Card, Suit } from "@/lib/cards";
 import { cumulativeScores, type GameState, type PlayLogEntry } from "@/lib/game";
 import { resolveTrick } from "@/lib/trick";
 import { formatCurrentHand } from "@/lib/matchLabels";
@@ -47,6 +48,7 @@ type CardFlight = {
   startScale: number;
   startRotate: number;
   duration: number;
+  landingImpact: boolean;
 };
 
 type TrickCollectCard = {
@@ -72,6 +74,16 @@ type TrickCollectFlight = {
 };
 
 const RAD_TO_DEG = 180 / Math.PI;
+const LANDING_IMPACT_MIN_RANK = rankVal("K");
+export const LANDING_IMPACT_TOTAL_MS = 760;
+export const TRICK_COLLECT_SETTLE_DELAY_MS = 500;
+
+type CurrentTrickPlay = {
+  playerIdx: number;
+  card: Card;
+  order: number;
+  playKey: string;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -137,6 +149,52 @@ function trickCollectKey(state: GameState, playKeys: readonly string[]) {
   return `${state.round}:${state.trickIdx}:${state.trickWinner ?? "none"}:${playKeys.join("|")}`;
 }
 
+function usePrimaryTapPreMove() {
+  const [isPrimaryTapPreMove, setIsPrimaryTapPreMove] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+
+    const mediaQuery = window.matchMedia("(hover: none), (pointer: coarse)");
+    const update = () => setIsPrimaryTapPreMove(mediaQuery.matches);
+    update();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", update);
+      return () => mediaQuery.removeEventListener("change", update);
+    }
+
+    mediaQuery.addListener(update);
+    return () => mediaQuery.removeListener(update);
+  }, []);
+
+  return isPrimaryTapPreMove;
+}
+
+export function cardFlightCompletionHoldMs(flightDurationSeconds: number, landingImpact: boolean) {
+  void flightDurationSeconds;
+  if (!landingImpact) return 0;
+  return LANDING_IMPACT_TOTAL_MS;
+}
+
+export function shouldShowLandingImpact(
+  previousPlays: readonly CurrentTrickPlay[],
+  currentPlays: readonly CurrentTrickPlay[],
+  candidatePlayKey: string,
+  trumpSuit: Suit | null,
+) {
+  if (previousPlays.length === 0 || currentPlays.length <= previousPlays.length) return false;
+
+  const leadSuit = currentPlays[0]?.card.s;
+  if (!leadSuit) return false;
+
+  const previousWinner = resolveTrick(previousPlays, leadSuit, trumpSuit) as CurrentTrickPlay;
+  if (rankVal(previousWinner.card.r) < LANDING_IMPACT_MIN_RANK) return false;
+
+  const currentWinner = resolveTrick(currentPlays, leadSuit, trumpSuit) as CurrentTrickPlay;
+  return currentWinner.playKey === candidatePlayKey && previousWinner.playKey !== candidatePlayKey;
+}
+
 export function Table() {
   return <TableView />;
 }
@@ -168,6 +226,7 @@ export function TableView({
   const showTrumpHints = useSettings((s) => s.showTrumpHints);
   const animationsEnabled = useSettings((s) => s.animations);
   const state = stateProp ?? localState;
+  const canPrimaryTapPreMove = usePrimaryTapPreMove();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
@@ -176,6 +235,8 @@ export function TableView({
   const [collectFlights, setCollectFlights] = useState<TrickCollectFlight[]>([]);
   const [hiddenPlayKeys, setHiddenPlayKeys] = useState<Set<string>>(() => new Set());
   const [collectingPlayKeys, setCollectingPlayKeys] = useState<Set<string>>(() => new Set());
+  const [visualTrick, setVisualTrick] = useState<{ key: string; visibleCount: number } | null>(null);
+  const [impactShakeActive, setImpactShakeActive] = useState(false);
   const prefersReducedMotion = useReducedMotion();
   const shouldReduceMotion = prefersReducedMotion || !animationsEnabled;
   const historyTitleId = useId();
@@ -186,8 +247,93 @@ export function TableView({
   const winnerRefs = useRef(new Map<number, HTMLElement>());
   const targetRefs = useRef(new Map<string, HTMLElement>());
   const clickOriginsRef = useRef(new Map<string, RectSnapshot>());
+  const lastPrimaryPointerTypeRef = useRef<string | null>(null);
   const prevPlayKeysRef = useRef<string[]>([]);
+  const pendingPlayAnimationKeysRef = useRef(new Set<string>());
+  const windowInactiveRef = useRef(false);
+  const suppressCatchUpAnimationsRef = useRef(false);
+  const latestFullPlaySignatureRef = useRef("");
+  const inactiveStartFullPlaySignatureRef = useRef("");
   const collectedTricksRef = useRef(new Set<string>());
+  const collectTimerRef = useRef<number | null>(null);
+  const impactShakeTimerRef = useRef<number | null>(null);
+  const impactShakeFrameRef = useRef<number | null>(null);
+
+  const clearCollectTimer = useCallback(() => {
+    if (collectTimerRef.current == null) return;
+    window.clearTimeout(collectTimerRef.current);
+    collectTimerRef.current = null;
+  }, []);
+
+  const triggerImpactShake = useCallback(() => {
+    if (impactShakeTimerRef.current != null) {
+      window.clearTimeout(impactShakeTimerRef.current);
+    }
+    if (impactShakeFrameRef.current != null) {
+      window.cancelAnimationFrame(impactShakeFrameRef.current);
+    }
+    setImpactShakeActive(false);
+    impactShakeFrameRef.current = window.requestAnimationFrame(() => {
+      impactShakeFrameRef.current = null;
+      setImpactShakeActive(true);
+    });
+    impactShakeTimerRef.current = window.setTimeout(() => {
+      impactShakeTimerRef.current = null;
+      setImpactShakeActive(false);
+    }, LANDING_IMPACT_TOTAL_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (impactShakeTimerRef.current != null) {
+        window.clearTimeout(impactShakeTimerRef.current);
+      }
+      if (impactShakeFrameRef.current != null) {
+        window.cancelAnimationFrame(impactShakeFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const markInactive = () => {
+      if (!windowInactiveRef.current) {
+        inactiveStartFullPlaySignatureRef.current = latestFullPlaySignatureRef.current;
+      }
+      windowInactiveRef.current = true;
+      suppressCatchUpAnimationsRef.current = true;
+      pendingPlayAnimationKeysRef.current.clear();
+      clearCollectTimer();
+      setImpactShakeActive(false);
+      setFlights((current) => (current.length ? [] : current));
+      setCollectFlights((current) => (current.length ? [] : current));
+      setHiddenPlayKeys((current) => (current.size ? new Set() : current));
+      setCollectingPlayKeys((current) => (current.size ? new Set() : current));
+    };
+    const markActive = () => {
+      windowInactiveRef.current = false;
+      if (inactiveStartFullPlaySignatureRef.current === latestFullPlaySignatureRef.current) {
+        suppressCatchUpAnimationsRef.current = false;
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.hidden) markInactive();
+      else markActive();
+    };
+
+    windowInactiveRef.current =
+      typeof document !== "undefined" ? document.hidden || !document.hasFocus() : false;
+    if (windowInactiveRef.current) suppressCatchUpAnimationsRef.current = true;
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", markInactive);
+    window.addEventListener("focus", markActive);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", markInactive);
+      window.removeEventListener("focus", markActive);
+    };
+  }, [clearCollectTimer]);
 
   useEffect(() => {
     const updateFanWidth = () => setTableFanMaxWidth(Math.min(window.innerWidth - 32, 780));
@@ -227,6 +373,7 @@ export function TableView({
   }, []);
 
   const completeFlight = useCallback((flightId: string, playKeyToReveal: string) => {
+    pendingPlayAnimationKeysRef.current.delete(playKeyToReveal);
     setFlights((current) => current.filter((flight) => flight.id !== flightId));
     setHiddenPlayKeys((current) => {
       if (!current.has(playKeyToReveal)) return current;
@@ -255,7 +402,7 @@ export function TableView({
     router.push("/");
   }, [localAbandon, onAbandon, router]);
 
-  const currentTrickPlays = useMemo(
+  const fullTrickPlays = useMemo(
     () =>
       state
         ? state.currentTrick.map((play, index) => ({
@@ -265,6 +412,18 @@ export function TableView({
           }))
         : [],
     [state],
+  );
+  const visualTrickKey = state ? `${state.round}:${state.trickIdx}` : "";
+  latestFullPlaySignatureRef.current = `${visualTrickKey}:${fullTrickPlays
+    .map((play) => play.playKey)
+    .join("|")}`;
+  const visualVisibleCount =
+    visualTrick?.key === visualTrickKey
+      ? Math.min(visualTrick.visibleCount, fullTrickPlays.length)
+      : fullTrickPlays.length;
+  const currentTrickPlays = useMemo(
+    () => fullTrickPlays.slice(0, visualVisibleCount),
+    [fullTrickPlays, visualVisibleCount],
   );
   const currentPlayKeys = useMemo(
     () => currentTrickPlays.map((play) => play.playKey),
@@ -279,19 +438,71 @@ export function TableView({
 
   useLayoutEffect(() => {
     if (!state) {
+      setVisualTrick((current) => (current == null ? current : null));
       prevPlayKeysRef.current = [];
       setFlights((current) => (current.length ? [] : current));
       setCollectFlights((current) => (current.length ? [] : current));
       setHiddenPlayKeys((current) => (current.size ? new Set() : current));
       setCollectingPlayKeys((current) => (current.size ? new Set() : current));
+      pendingPlayAnimationKeysRef.current.clear();
       collectedTricksRef.current.clear();
+      clearCollectTimer();
+      return;
+    }
+
+    setVisualTrick((current) => {
+      if (windowInactiveRef.current || suppressCatchUpAnimationsRef.current) {
+        return { key: visualTrickKey, visibleCount: fullTrickPlays.length };
+      }
+      if (current?.key === visualTrickKey) {
+        const clampedCount = Math.min(current.visibleCount, fullTrickPlays.length);
+        return clampedCount === current.visibleCount ? current : { ...current, visibleCount: clampedCount };
+      }
+      return { key: visualTrickKey, visibleCount: fullTrickPlays.length };
+    });
+  }, [clearCollectTimer, fullTrickPlays.length, state, visualTrickKey]);
+
+  useLayoutEffect(() => {
+    if (!state || visualTrick?.key !== visualTrickKey) return;
+    if (visualTrick.visibleCount >= fullTrickPlays.length) return;
+    if (windowInactiveRef.current || suppressCatchUpAnimationsRef.current) {
+      setVisualTrick((current) =>
+        current?.key === visualTrickKey
+          ? { ...current, visibleCount: fullTrickPlays.length }
+          : current,
+      );
+      return;
+    }
+    if (flights.length > 0 || hiddenPlayKeys.size > 0) return;
+
+    setVisualTrick((current) => {
+      if (!current || current.key !== visualTrickKey) return current;
+      if (current.visibleCount >= fullTrickPlays.length) return current;
+      return { ...current, visibleCount: current.visibleCount + 1 };
+    });
+  }, [
+    flights.length,
+    fullTrickPlays.length,
+    hiddenPlayKeys.size,
+    state,
+    visualTrick,
+    visualTrickKey,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!state) {
       return;
     }
 
     const previousKeys = prevPlayKeysRef.current;
     const previousKeySet = new Set(previousKeys);
+    const previousTrickPlays = currentTrickPlays.filter((play) => previousKeySet.has(play.playKey));
     const addedPlays = currentTrickPlays.filter((play) => !previousKeySet.has(play.playKey));
+    const shouldSuppressCatchUp = windowInactiveRef.current || suppressCatchUpAnimationsRef.current;
     prevPlayKeysRef.current = currentPlayKeys;
+    for (const key of [...pendingPlayAnimationKeysRef.current]) {
+      if (!currentPlayKeys.includes(key)) pendingPlayAnimationKeysRef.current.delete(key);
+    }
 
     setHiddenPlayKeys((current) => {
       let changed = false;
@@ -315,6 +526,23 @@ export function TableView({
       const next = current.filter((flight) => currentPlayKeys.includes(flight.playKey));
       return next.length === current.length ? current : next;
     });
+
+    if (shouldSuppressCatchUp) {
+      if (addedPlays.length > 0) {
+        clearCollectTimer();
+        pendingPlayAnimationKeysRef.current.clear();
+        setVisualTrick((current) =>
+          current?.key === visualTrickKey
+            ? { ...current, visibleCount: fullTrickPlays.length }
+            : current,
+        );
+        setFlights((current) => (current.length ? [] : current));
+        setHiddenPlayKeys((current) => (current.size ? new Set() : current));
+      }
+      suppressCatchUpAnimationsRef.current = false;
+      inactiveStartFullPlaySignatureRef.current = latestFullPlaySignatureRef.current;
+      return;
+    }
 
     if (shouldReduceMotion || addedPlays.length === 0) {
       return;
@@ -360,6 +588,12 @@ export function TableView({
         startScale: clickOrigin ? clamp(source.width / targetRect.width, 0.72, 1.08) : 0.76,
         startRotate,
         duration,
+        landingImpact: shouldShowLandingImpact(
+          previousTrickPlays,
+          currentTrickPlays,
+          play.playKey,
+          state.trumpCard?.s ?? null,
+        ),
       }];
     });
 
@@ -367,13 +601,23 @@ export function TableView({
       return;
     }
 
+    clearCollectTimer();
+    for (const flight of newFlights) pendingPlayAnimationKeysRef.current.add(flight.playKey);
     setHiddenPlayKeys((current) => {
       const next = new Set(current);
       for (const flight of newFlights) next.add(flight.playKey);
       return next;
     });
     setFlights((current) => [...current, ...newFlights]);
-  }, [currentPlayKeys, currentTrickPlays, shouldReduceMotion, state]);
+  }, [
+    clearCollectTimer,
+    currentPlayKeys,
+    currentTrickPlays,
+    fullTrickPlays.length,
+    shouldReduceMotion,
+    state,
+    visualTrickKey,
+  ]);
 
   useLayoutEffect(() => {
     if (
@@ -382,84 +626,98 @@ export function TableView({
       state.phase !== "trick-end" ||
       state.trickWinner == null ||
       currentTrickPlays.length === 0 ||
+      currentTrickPlays.length < fullTrickPlays.length ||
       flights.length > 0 ||
-      hiddenPlayKeys.size > 0
+      hiddenPlayKeys.size > 0 ||
+      pendingPlayAnimationKeysRef.current.size > 0
     ) {
+      clearCollectTimer();
       return;
     }
 
     const collectKey = trickCollectKey(state, currentPlayKeys);
     if (collectedTricksRef.current.has(collectKey)) return;
+    if (collectTimerRef.current != null) return;
+    const trickWinner = state.trickWinner;
 
-    const referenceNode = targetRefs.current.get(currentTrickPlays[0]?.playKey ?? "");
-    const referenceRect = referenceNode
-      ? targetCardRect(referenceNode)
-      : {
-          left: window.innerWidth / 2 - 40,
-          top: window.innerHeight / 2 - 56,
-          width: 80,
-          height: 112,
-        };
-    const winnerRect = winnerRefs.current.get(state.trickWinner)
-      ? snapshotRect(winnerRefs.current.get(state.trickWinner)!.getBoundingClientRect())
-      : fallbackOriginRect(state.trickWinner, state.players.length, referenceRect);
-    if (winnerRect.width <= 0 || winnerRect.height <= 0) return;
+    collectTimerRef.current = window.setTimeout(() => {
+      collectTimerRef.current = null;
+      if (collectedTricksRef.current.has(collectKey)) return;
 
-    const winnerCenter = centerOf(winnerRect);
-    const midpoint = (currentTrickPlays.length - 1) / 2;
-    let farthestDistance = 0;
-    const cards = currentTrickPlays.flatMap((play, index) => {
-      const targetNode = targetRefs.current.get(play.playKey);
-      if (!targetNode) return [];
+      const referenceNode = targetRefs.current.get(currentTrickPlays[0]?.playKey ?? "");
+      const referenceRect = referenceNode
+        ? targetCardRect(referenceNode)
+        : {
+            left: window.innerWidth / 2 - 40,
+            top: window.innerHeight / 2 - 56,
+            width: 80,
+            height: 112,
+          };
+      const winnerRect = winnerRefs.current.get(trickWinner)
+        ? snapshotRect(winnerRefs.current.get(trickWinner)!.getBoundingClientRect())
+        : fallbackOriginRect(trickWinner, state.players.length, referenceRect);
+      if (winnerRect.width <= 0 || winnerRect.height <= 0) return;
 
-      const rect = targetCardRect(targetNode);
-      if (rect.width <= 0 || rect.height <= 0) return [];
+      const winnerCenter = centerOf(winnerRect);
+      const midpoint = (currentTrickPlays.length - 1) / 2;
+      let farthestDistance = 0;
+      const cards = currentTrickPlays.flatMap((play, index) => {
+        const targetNode = targetRefs.current.get(play.playKey);
+        if (!targetNode) return [];
 
-      const sourceCenter = centerOf(rect);
-      const spread = index - midpoint;
-      const baseToX = winnerCenter.x - sourceCenter.x;
-      const baseToY = winnerCenter.y - sourceCenter.y;
-      const distance = Math.hypot(baseToX, baseToY);
-      farthestDistance = Math.max(farthestDistance, distance);
-      const pullAngle = Math.atan2(baseToY, baseToX) * RAD_TO_DEG;
+        const rect = targetCardRect(targetNode);
+        if (rect.width <= 0 || rect.height <= 0) return [];
 
-      return [{
-        id: `${collectKey}:${play.playKey}`,
-        playKey: play.playKey,
-        card: play.card,
-        rect,
-        liftX: clamp(-baseToX * 0.055 + spread * 8, -30, 30),
-        liftY: clamp(-18 - Math.abs(baseToY) * 0.028, -46, -18),
-        toX: baseToX + clamp(spread * 4.5, -18, 18),
-        toY: baseToY + clamp(Math.abs(spread) * 2.2, -2, 10),
-        startRotate: normalizeRotation(spread * 2.4),
-        liftRotate: normalizeRotation(spread * 4.4),
-        endRotate: normalizeRotation(clamp(pullAngle * 0.08, -11, 11) + spread * 5.6),
-        delay: index * 0.018,
-      }];
-    });
+        const sourceCenter = centerOf(rect);
+        const spread = index - midpoint;
+        const baseToX = winnerCenter.x - sourceCenter.x;
+        const baseToY = winnerCenter.y - sourceCenter.y;
+        const distance = Math.hypot(baseToX, baseToY);
+        farthestDistance = Math.max(farthestDistance, distance);
+        const pullAngle = Math.atan2(baseToY, baseToX) * RAD_TO_DEG;
 
-    if (cards.length !== currentTrickPlays.length) return;
+        return [{
+          id: `${collectKey}:${play.playKey}`,
+          playKey: play.playKey,
+          card: play.card,
+          rect,
+          liftX: clamp(-baseToX * 0.055 + spread * 8, -30, 30),
+          liftY: clamp(-18 - Math.abs(baseToY) * 0.028, -46, -18),
+          toX: baseToX + clamp(spread * 4.5, -18, 18),
+          toY: baseToY + clamp(Math.abs(spread) * 2.2, -2, 10),
+          startRotate: normalizeRotation(spread * 2.4),
+          liftRotate: normalizeRotation(spread * 4.4),
+          endRotate: normalizeRotation(clamp(pullAngle * 0.08, -11, 11) + spread * 5.6),
+          delay: index * 0.018,
+        }];
+      });
 
-    collectedTricksRef.current.add(collectKey);
-    setCollectingPlayKeys((current) => {
-      const next = new Set(current);
-      for (const card of cards) next.add(card.playKey);
-      return next;
-    });
-    setCollectFlights((current) => [
-      ...current,
-      {
-        id: `${collectKey}:${performance.now()}`,
-        trickKey: collectKey,
-        cards,
-        duration: clamp(0.48 + farthestDistance / 2600 + cards.length * 0.008, 0.56, 0.82),
-      },
-    ]);
+      if (cards.length !== currentTrickPlays.length) return;
+
+      collectedTricksRef.current.add(collectKey);
+      setCollectingPlayKeys((current) => {
+        const next = new Set(current);
+        for (const card of cards) next.add(card.playKey);
+        return next;
+      });
+      setCollectFlights((current) => [
+        ...current,
+        {
+          id: `${collectKey}:${performance.now()}`,
+          trickKey: collectKey,
+          cards,
+          duration: clamp(0.66 + farthestDistance / 2300 + cards.length * 0.012, 0.72, 1.08),
+        },
+      ]);
+    }, TRICK_COLLECT_SETTLE_DELAY_MS);
+
+    return clearCollectTimer;
   }, [
+    clearCollectTimer,
     currentPlayKeys,
     currentTrickPlays,
     flights.length,
+    fullTrickPlays.length,
     hiddenPlayKeys.size,
     shouldReduceMotion,
     state,
@@ -474,7 +732,7 @@ export function TableView({
   const myLegal =
     state.phase === "playing" ? new Set(legalCards(youHand, leadSuit).map((c) => c.key)) : null;
   const playLog = state.playLog ?? [];
-  const trickCards = state.currentTrick.length;
+  const trickCards = currentTrickPlays.length;
   const isHumanActing =
     (state.phase === "bidding" && state.bidTurn === 0) ||
     (state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null);
@@ -506,7 +764,10 @@ export function TableView({
   const totalBid = state.bids.filter((b) => b != null).reduce<number>((a, b) => a + (b ?? 0), 0);
 
   return (
-    <div className={"gb-table-wrap layout-" + layout} data-phase={state.phase}>
+    <div
+      className={"gb-table-wrap layout-" + layout + (impactShakeActive ? " impact-shake" : "")}
+      data-phase={state.phase}
+    >
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">
@@ -655,7 +916,7 @@ export function TableView({
                         </motion.div>
                       );
                     })}
-                    {state.currentTrick.length === 0 && (
+                    {currentTrickPlays.length === 0 && (
                       <div className="gb-deal-msg gb-lead-msg">
                         {state.players[state.turnIdx]?.name} leads
                       </div>
@@ -769,7 +1030,10 @@ export function TableView({
               const cardName = `${rank} of ${SUIT_NAME[c.s]}`;
               const preMoveLabel = isPreMove
                 ? `Pre-move selected: ${cardName}`
-                : `Tap to pre-move ${cardName}`;
+                : canPrimaryTapPreMove
+                ? `Tap to pre-move ${cardName}`
+                : `Right-click to pre-move ${cardName}`;
+              const preMoveTitle = canPrimaryTapPreMove ? "Tap to pre-move" : "Right-click to pre-move";
               const handlePreMove = (node: HTMLElement) => {
                 if (!canPreMove) return;
                 captureClickOrigin(c.key, node);
@@ -805,29 +1069,58 @@ export function TableView({
                       : `${cardName} in your hand`
                   }
                   aria-pressed={isPreMove ? true : undefined}
-                  title={canPreMove ? "Tap to pre-move" : undefined}
+                  title={canPreMove ? preMoveTitle : undefined}
+                  onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+                    if (event.button !== 0) return;
+                    lastPrimaryPointerTypeRef.current = event.pointerType;
+                  }}
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     if (isPlayable) {
                       handlePlay(event.currentTarget);
                       return;
                     }
+                    if (!canPrimaryTapPreMove) return;
+                    if (lastPrimaryPointerTypeRef.current === "mouse") return;
                     handlePreMove(event.currentTarget);
                   }}
                   onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     if (!isPlayable && !canPreMove) return;
                     event.preventDefault();
-                    if (isPlayable) {
-                      handlePlay(event.currentTarget);
-                      return;
-                    }
+                    if (isPlayable) return;
                     handlePreMove(event.currentTarget);
                   }}
                   onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
-                    if (!canPreMove || (event.key !== "Enter" && event.key !== " ")) return;
+                    if (
+                      !canPreMove ||
+                      !canPrimaryTapPreMove ||
+                      (event.key !== "Enter" && event.key !== " ")
+                    ) {
+                      return;
+                    }
                     event.preventDefault();
                     handlePreMove(event.currentTarget);
                   }}
                 >
+                  {isTrump && (
+                    <span className="gb-trump-card-star" aria-hidden="true">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        x="0px"
+                        y="0px"
+                        width="48px"
+                        height="48px"
+                        viewBox="0 0 48 48"
+                        focusable="false"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          clipRule="evenodd"
+                          d="M24 3L28.8937 18.695H45L32.174 28.372L37.2312 44L24 34.3481L10.7688 44L15.826 28.372L3 18.695H19.1063L24 3Z"
+                          fill="currentColor"
+                        />
+                      </svg>
+                    </span>
+                  )}
                   <PlayingCard card={c} size={108} priority={index === 0} />
                 </button>
               );
@@ -861,7 +1154,7 @@ export function TableView({
           />
         )}
       </AnimatePresence>
-      <CardFlightLayer flights={flights} onComplete={completeFlight} />
+      <CardFlightLayer flights={flights} onComplete={completeFlight} onImpactStart={triggerImpactShake} />
       <TrickCollectLayer flights={collectFlights} onComplete={completeCollectFlight} />
     </div>
   );
@@ -877,63 +1170,128 @@ function flightTransform(x: number, y: number, rotate: number, scale: number) {
 function CardFlightLayer({
   flights,
   onComplete,
+  onImpactStart,
 }: {
   flights: CardFlight[];
   onComplete: (flightId: string, playKey: string) => void;
+  onImpactStart: () => void;
 }) {
   return (
     <div className="gb-card-flight-layer" aria-hidden="true">
       <AnimatePresence>
         {flights.map((flight) => (
-          <motion.div
+          <CardFlightSprite
             key={flight.id}
-            className="gb-card-flight"
-            style={{
-              left: flight.rect.left,
-              top: flight.rect.top,
-              width: flight.rect.width,
-              height: flight.rect.height,
-            }}
-            initial={{
-              opacity: 1,
-              transform: flightTransform(flight.fromX, flight.fromY, flight.startRotate, flight.startScale),
-            }}
-            animate={{
-              opacity: 1,
-              transform: flightTransform(0, 0, 0, 1),
-            }}
-            exit={{ opacity: 0, transition: { duration: 0.04 } }}
-            transition={{
-              duration: flight.duration,
-              ease: flightMoveEase,
-            }}
-            onAnimationComplete={() => onComplete(flight.id, flight.playKey)}
-          >
-            <motion.div
-              className="gb-card-flight-smear"
-              style={{
-                transform: `translate3d(${flight.trailX}px, ${flight.trailY}px, 0) scale(1.01)`,
-              }}
-              initial={{
-                opacity: 0.18,
-              }}
-              animate={{
-                opacity: 0,
-              }}
-              transition={{
-                duration: flight.duration * 0.82,
-                ease: easeOutQuart,
-              }}
-            >
-              <PlayingCard card={flight.card} size={flight.rect.width} priority />
-            </motion.div>
-            <div className="gb-card-flight-body">
-              <PlayingCard card={flight.card} size={flight.rect.width} priority />
-            </div>
-          </motion.div>
+            flight={flight}
+            onComplete={onComplete}
+            onImpactStart={onImpactStart}
+          />
         ))}
       </AnimatePresence>
     </div>
+  );
+}
+
+function CardFlightSprite({
+  flight,
+  onComplete,
+  onImpactStart,
+}: {
+  flight: CardFlight;
+  onComplete: (flightId: string, playKey: string) => void;
+  onImpactStart: () => void;
+}) {
+  const [hasLanded, setHasLanded] = useState(false);
+  const completionTimerRef = useRef<number | null>(null);
+  const completedRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (completionTimerRef.current != null) {
+        window.clearTimeout(completionTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const finishFlight = useCallback(() => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+
+    const holdMs = cardFlightCompletionHoldMs(flight.duration, flight.landingImpact);
+    if (holdMs <= 0) {
+      onComplete(flight.id, flight.playKey);
+      return;
+    }
+
+    setHasLanded(true);
+    onImpactStart();
+    completionTimerRef.current = window.setTimeout(() => {
+      completionTimerRef.current = null;
+      onComplete(flight.id, flight.playKey);
+    }, holdMs);
+  }, [flight.duration, flight.id, flight.landingImpact, flight.playKey, onComplete, onImpactStart]);
+
+  return (
+    <motion.div
+      key={flight.id}
+      className={
+        "gb-card-flight" +
+        (flight.landingImpact ? " landing-impact" : "") +
+        (hasLanded ? " impact-landed" : "") +
+        (isRed(flight.card.s) ? " impact-red" : " impact-black")
+      }
+      style={{
+        left: flight.rect.left,
+        top: flight.rect.top,
+        width: flight.rect.width,
+        height: flight.rect.height,
+      }}
+      initial={{
+        opacity: 1,
+        transform: flightTransform(flight.fromX, flight.fromY, flight.startRotate, flight.startScale),
+      }}
+      animate={{
+        opacity: 1,
+        transform: flightTransform(0, 0, 0, 1),
+      }}
+      exit={{ opacity: 0, transition: { duration: 0.04 } }}
+      transition={{
+        duration: flight.duration,
+        ease: flightMoveEase,
+      }}
+      onAnimationComplete={finishFlight}
+    >
+      <motion.div
+        className="gb-card-flight-smear"
+        style={{
+          transform: `translate3d(${flight.trailX}px, ${flight.trailY}px, 0) scale(1.01)`,
+        }}
+        initial={{
+          opacity: 0.18,
+        }}
+        animate={{
+          opacity: 0,
+        }}
+        transition={{
+          duration: flight.duration * 0.82,
+          ease: easeOutQuart,
+        }}
+      >
+        <PlayingCard card={flight.card} size={flight.rect.width} priority />
+      </motion.div>
+      <div className="gb-card-flight-body">
+        <PlayingCard card={flight.card} size={flight.rect.width} priority />
+      </div>
+      {flight.landingImpact && hasLanded && (
+        <div className="gb-card-landing-impact">
+          <span className="gb-impact-smoke smoke-1" />
+          <span className="gb-impact-smoke smoke-2" />
+          <span className="gb-impact-smoke smoke-3" />
+          <span className="gb-impact-smoke smoke-4" />
+        </div>
+      )}
+    </motion.div>
   );
 }
 
