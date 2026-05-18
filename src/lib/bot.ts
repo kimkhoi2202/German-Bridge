@@ -15,7 +15,7 @@ import {
   type ChampionActionScore,
 } from "./ai/championSnapshot";
 
-export type Personality = "cautious" | "mixed" | "aggressive" | "champion" | "gpt";
+export type Personality = "cautious" | "mixed" | "aggressive" | "champion" | "gpt" | "gemini";
 
 type BidDecisionAction = {
   kind: "bid";

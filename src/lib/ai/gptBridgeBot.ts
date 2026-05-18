@@ -17,8 +17,12 @@ import {
 } from "./gptBridgeMemory";
 
 export const DEFAULT_GPT_BRIDGE_MODEL = "gpt-5.5";
-export const DEFAULT_GPT_BRIDGE_REASONING_EFFORT = "none";
+export const DEFAULT_GPT_BRIDGE_REASONING_EFFORT = "minimal";
 export const GPT_BRIDGE_POLICY_ID = "openai:german-bridge-gpt";
+export const DEFAULT_GEMINI_BRIDGE_MODEL = "gemini-3-flash-preview";
+export const DEFAULT_GEMINI_BRIDGE_BIDDING_THINKING_LEVEL = "high";
+export const DEFAULT_GEMINI_BRIDGE_PLAY_THINKING_LEVEL = "medium";
+export const GEMINI_BRIDGE_POLICY_ID = "google:german-bridge-gemini";
 
 export type GptBridgeDecision =
   | {
@@ -40,6 +44,9 @@ export interface GptBridgeTraceMeta {
   strategyId?: string;
   requestId?: string;
   latencyMs?: number;
+  provider?: "openai" | "google";
+  personality?: "gpt" | "gemini";
+  policyId?: string;
 }
 
 type ParsedDecision = Partial<GptBridgeDecision> & Record<string, unknown>;
@@ -247,6 +254,49 @@ function cardTier(card: Card, leadSuit: Card["s"], trumpSuit: BotObservation["tr
   return "off";
 }
 
+function playWinsTrick(
+  observation: BotObservation,
+  card: Card,
+  trick = observation.currentTrick,
+) {
+  const leadSuit = trick[0]?.card.s ?? card.s;
+  return (
+    resolveTrick(
+      [...trick, { playerIdx: observation.playerIdx, card }],
+      leadSuit,
+      observation.trumpSuit,
+    ).playerIdx === observation.playerIdx
+  );
+}
+
+function duplicateThreat(observation: BotObservation, card: Card) {
+  if (observation.decks <= 1) return "dupSafe";
+  const seenSameRankSuit = observation.playLog.some((entry) => entry.card.r === card.r && entry.card.s === card.s) ||
+    observation.currentTrick.some((play) => play.card.r === card.r && play.card.s === card.s) ||
+    observation.ownHand.some((own) => own.key !== card.key && own.r === card.r && own.s === card.s);
+  return seenSameRankSuit ? "dupSeen" : "dupLive";
+}
+
+function cardControlRole(observation: BotObservation, card: Card) {
+  const rank = rankVal(card.r);
+  const bid = observation.bids[observation.playerIdx] ?? null;
+  const won = observation.won[observation.playerIdx] ?? 0;
+  const need = bid == null ? null : bid - won;
+  const remaining = observation.remainingHandCounts[observation.playerIdx] ?? observation.ownHand.length;
+  const isTrump = observation.trumpSuit === card.s;
+  const high = rank >= rankVal("J");
+  if (need != null && need <= 0 && high) return "dangerExtra";
+  if (need != null && need > 0 && remaining <= need) return "mustFindWin";
+  if (isTrump && high) return "lateControl";
+  if (high) return "possibleControl";
+  return "flex";
+}
+
+function trickPressure(observation: BotObservation, card: Card) {
+  if (!observation.currentTrick.length) return "leadChoice";
+  return playWinsTrick(observation, card) ? "canTakeNow" : "cannotTakeNow";
+}
+
 function compactLegalCardLens(observation: BotObservation) {
   if (!observation.legalCards.length) return "cardlens=none";
   const leadSuit = observation.currentTrick[0]?.card.s ?? null;
@@ -257,16 +307,40 @@ function compactLegalCardLens(observation: BotObservation) {
       const now =
         leadSuit == null
           ? "lead"
-          : resolveTrick(
-              [...observation.currentTrick, { playerIdx: observation.playerIdx, card }],
-              leadSuit,
-              observation.trumpSuit,
-            ).playerIdx === observation.playerIdx
+          : playWinsTrick(observation, card)
             ? "nowWin"
             : "nowLose";
-      return `${card.key}:${card.r}${card.s.toUpperCase()}/v${rankVal(card.r)}/${tier}/${now}/after${afterSeats}`;
+      return `${card.key}:${card.r}${card.s.toUpperCase()}/v${rankVal(card.r)}/${tier}/${now}/${duplicateThreat(
+        observation,
+        card,
+      )}/${cardControlRole(observation, card)}/${trickPressure(observation, card)}/after${afterSeats}`;
     })
     .join(" ")}`;
+}
+
+function compactExecutionPlan(observation: BotObservation) {
+  if (observation.phase !== "playing") return "execplan=bid";
+  const bid = observation.bids[observation.playerIdx] ?? null;
+  const won = observation.won[observation.playerIdx] ?? 0;
+  const need = bid == null ? null : bid - won;
+  const remaining = observation.remainingHandCounts[observation.playerIdx] ?? observation.ownHand.length;
+  const legalWinNow = observation.currentTrick.length
+    ? observation.legalCards.filter((card) => playWinsTrick(observation, card))
+    : [];
+  const highLegal = observation.legalCards.filter((card) => rankVal(card.r) >= rankVal("J"));
+  const mode =
+    need == null
+      ? "unknownTarget"
+      : need <= 0
+        ? "avoidExtra"
+        : need >= remaining
+          ? "mustWinEveryRemaining"
+          : legalWinNow.length
+            ? "chooseWhetherToTakeNow"
+            : "setupFutureWin";
+  return `execplan=target${bid ?? "?"}/won${won}/need${need ?? "?"}/remaining${remaining}/mode:${mode}/winNow[${legalWinNow
+    .map(compactCard)
+    .join(" ") || "-"}]/highLegal[${highLegal.map(compactCard).join(" ") || "-"}]`;
 }
 
 function expertDoctrine(observation: BotObservation) {
@@ -286,10 +360,12 @@ function expertDoctrine(observation: BotObservation) {
     "Use table signals in real time: players below target need wins, at-target players fear extra tricks, and over-target players want to dump danger.",
     "Use privateThread as your own hand memory. It is not a hard script, but it is your prior plan and decision chain; update your choice from the live state instead of starting from scratch.",
     "Do not simplify high-card timing into always early or always late. Aces and kings in two-deck/crowded games are uncertain: play them early only to test, lock, or force a needed line; otherwise preserve them for late control when that keeps your bid reachable.",
+    "Use execplan before choosing. If you still need tricks, do not throw a high/control card into a line that probably loses unless it sets up a future win or no better legal card exists. If winNow cards exist and your plan needs a trick, seriously consider taking it now.",
+    "In two-deck games, duplicateThreat matters: an ace led early can still be overtaken by the matching ace later in the trick. Treat dupLive high cards as control cards, not automatic wins.",
     "Use tacticalmode as a tie-breaker so your play is not predictable.",
     "Never lead trump by habit and never auto-play strongest trump. Lead or burn trump only with a named purpose: drain a likely trump bidder, bully a specific target, protect your bid, or prevent a bigger exact score. Otherwise preserve trump for endgame control.",
     "Weak trump can lose to stronger trump later. If a low trump is your only path, treat it as pressure or sacrifice unless the table proves it will hold.",
-    "Use cardlens and needs: decide whether each card is likely to win now, lose now, preserve control, create a void, burn danger, or force an opponent into an unwanted trick.",
+    "Use cardlens, execplan, and needs: decide whether each card is likely to win now, lose now, preserve control, create a void, burn danger, or force an opponent into an unwanted trick.",
     "Do not blindly dump or blindly win. Re-evaluate every turn from the live table: current trick, played cards, void profiles, remaining cards, and each player's need.",
   ].join(" ");
 }
@@ -378,6 +454,7 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     `tablesignals:${compactTableSignals(observation)}`,
     compactTrumpLens(observation),
     compactTacticalMode(observation),
+    compactExecutionPlan(observation),
     formatGptBridgeMemoryForPrompt(options.memory, observation),
     `remaining=${observation.remainingHandCounts.join(",")}`,
     `players:${players}`,
@@ -528,9 +605,9 @@ export function gptBridgeDecisionToTrace(
   return {
     version: 1,
     decisionKind: decision.kind === "bid" ? "bid" : "card",
-    personality: "gpt",
-    policyId: GPT_BRIDGE_POLICY_ID,
-    requestedPolicyId: `openai:${meta.model}`,
+    personality: meta.personality ?? "gpt",
+    policyId: meta.policyId ?? GPT_BRIDGE_POLICY_ID,
+    requestedPolicyId: `${meta.provider ?? "openai"}:${meta.model}`,
     fallback: false,
     chosenAction,
     legalActionCount: legalActions.length,

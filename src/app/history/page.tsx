@@ -175,6 +175,7 @@ type AiDebugData = {
     traceCount: number;
     championTraceCount: number;
     gptTraceCount: number;
+    geminiTraceCount: number;
     fallbackCount: number;
     bySeat: {
       seatIdx: number;
@@ -221,6 +222,7 @@ function AiDebugPanel({
           <span>{debug.summary.traceCount} decisions</span>
           <span>{debug.summary.championTraceCount} champion</span>
           {debug.summary.gptTraceCount > 0 && <span>{debug.summary.gptTraceCount} GPT</span>}
+          {debug.summary.geminiTraceCount > 0 && <span>{debug.summary.geminiTraceCount} Gemini</span>}
           <span>{debug.summary.fallbackCount} fallbacks</span>
         </div>
       </div>
@@ -277,6 +279,7 @@ function AiDebugPanel({
 function formatPolicy(policyId: string) {
   if (policyId.startsWith("champion:")) return "Champion";
   if (policyId.startsWith("openai:")) return "GPT";
+  if (policyId.startsWith("google:")) return "Gemini";
   if (policyId.startsWith("heuristic:")) return policyId.replace("heuristic:", "Heuristic ");
   return policyId;
 }

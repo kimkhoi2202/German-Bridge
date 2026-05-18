@@ -9,11 +9,14 @@ import {
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { placeBid as applyPlaceBid, playCard as applyPlayCard, settleTrick, type GameState } from "../src/lib/game";
-import type { BotDecisionTrace } from "../src/lib/bot";
 import { createObservation } from "../src/lib/botObservation";
 import {
+  DEFAULT_GEMINI_BRIDGE_BIDDING_THINKING_LEVEL,
+  DEFAULT_GEMINI_BRIDGE_MODEL,
+  DEFAULT_GEMINI_BRIDGE_PLAY_THINKING_LEVEL,
   DEFAULT_GPT_BRIDGE_MODEL,
   DEFAULT_GPT_BRIDGE_REASONING_EFFORT,
+  GEMINI_BRIDGE_POLICY_ID,
   buildGptBridgeInput,
   buildGptBridgeTextFormat,
   gptBridgeDecisionToTrace,
@@ -47,6 +50,7 @@ import {
   findCardInSeatHand,
   finishRoundOrMatch,
   isBotTurn,
+  isGeminiBotTurn,
   isGptBotTurn,
   legalBidValues,
   legalCardKeys,
@@ -61,6 +65,10 @@ import { internal } from "./_generated/api";
 const DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS = 1024;
 const DEFAULT_GPT_BRIDGE_MAX_ATTEMPTS = 3;
 const DEFAULT_GPT_BRIDGE_RETRY_DELAY_MS = 1800;
+const DEFAULT_GEMINI_BRIDGE_MAX_OUTPUT_TOKENS = 512;
+const DEFAULT_GEMINI_BRIDGE_MAX_ATTEMPTS = 3;
+const DEFAULT_GEMINI_BRIDGE_RETRY_DELAY_MS = 1800;
+const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 const gptDecisionValidator = v.union(
   v.object({
@@ -75,7 +83,6 @@ const gptDecisionValidator = v.union(
     confidence: v.number(),
     reasoning_summary: v.string(),
   }),
-  v.null(),
 );
 
 function winnerSeat(scores: number[]) {
@@ -89,15 +96,52 @@ function envInteger(name: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function envBoolean(name: string, fallback: boolean) {
-  const value = process.env[name];
-  if (!value) return fallback;
-  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-}
-
 function shortFailureReason(reason: unknown) {
   const raw = reason instanceof Error ? reason.message : String(reason);
   return raw.replace(/\s+/g, " ").trim().slice(0, 240) || "gpt_decision_failed";
+}
+
+function providerFailureReason(provider: "gpt" | "gemini", reason: unknown) {
+  const short = shortFailureReason(reason);
+  return provider === "gemini" ? short.replace(/\bgpt_/g, "gemini_") : short;
+}
+
+function shortDebugText(value: unknown, limit = 500) {
+  if (typeof value !== "string") return null;
+  const clean = value.replace(/\s+/g, " ").trim();
+  return clean ? clean.slice(0, limit) : null;
+}
+
+function cardDebugLabel(card: { key: string; r: string; s: string; d: number }) {
+  return `${card.key}(${card.r}${card.s.toUpperCase()}d${card.d + 1})`;
+}
+
+function llmFailureDebug(
+  observation: ReturnType<typeof createObservation>,
+  args: { outputText: string; parsedDecision: unknown },
+) {
+  const debug: Record<string, unknown> = {
+    phase: observation.phase,
+    round: observation.round,
+    trickIdx: observation.trickIdx,
+    seatIdx: observation.playerIdx,
+    playerCount: observation.playerCount,
+    decks: observation.decks,
+    bidTurn: observation.bidTurn,
+    turnIdx: observation.turnIdx,
+    bids: observation.bids,
+    won: observation.won,
+    currentTrick: observation.currentTrick.map((play) => ({
+      seatIdx: play.playerIdx,
+      card: cardDebugLabel(play.card),
+    })),
+    legalBids: observation.legalBids,
+    legalCards: observation.legalCards.map(cardDebugLabel),
+  };
+  const outputText = shortDebugText(args.outputText);
+  if (outputText) debug.outputText = outputText;
+  if (args.parsedDecision !== null) debug.parsedDecision = args.parsedDecision;
+  return debug;
 }
 
 function outputTextFromOpenAiResponse(payload: unknown) {
@@ -144,38 +188,43 @@ function requestIdFromOpenAiResponse(payload: unknown, headerRequestId: string |
   return typeof id === "string" ? id : null;
 }
 
-function withGptFallbackTrace(
-  trace: BotDecisionTrace,
-  args: {
-    model: string;
-    reasoningEffort: string;
-    strategyId?: string;
-    fallbackReason: string;
-    requestId?: string;
-    latencyMs?: number;
-  },
-): BotDecisionTrace {
-  return {
-    ...trace,
-    fallback: true,
-    fallbackReason: args.fallbackReason,
-    requestedPolicyId: `openai:${args.model}`,
-    heuristic: {
-      ...(trace.heuristic ?? {}),
-      openAiModel: args.model,
-      reasoningEffort: args.reasoningEffort,
-      strategyId: args.strategyId ?? null,
-      requestId: args.requestId ?? null,
-      latencyMs: args.latencyMs ?? null,
-    },
-  };
+function outputTextFromGeminiResponse(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const candidates = (payload as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) return "";
+  const parts: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const content = (candidate as { content?: unknown }).content;
+    if (!content || typeof content !== "object") continue;
+    const contentParts = (content as { parts?: unknown }).parts;
+    if (!Array.isArray(contentParts)) continue;
+    for (const part of contentParts) {
+      if (!part || typeof part !== "object") continue;
+      const text = (part as { text?: unknown; thought?: unknown }).text;
+      const thought = (part as { thought?: unknown }).thought;
+      if (typeof text === "string" && thought !== true) parts.push(text);
+    }
+  }
+  return parts.join("");
 }
 
-function withBotEventPayload(payload: unknown, extra: Record<string, boolean>) {
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    return { ...payload, ...extra };
-  }
-  return extra;
+function geminiFinishReason(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const candidates = (payload as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) return null;
+  const first = candidates[0];
+  if (!first || typeof first !== "object") return null;
+  const reason = (first as { finishReason?: unknown }).finishReason;
+  return typeof reason === "string" && reason ? reason : null;
+}
+
+function errorMessageFromGeminiResponse(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return null;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" ? message : null;
 }
 
 async function updateStatsForCompletedGame(
@@ -248,6 +297,14 @@ async function scheduleNext(ctx: MutationCtx, gameId: Id<"games">, state: GameSt
   if (isBotTurn(state)) {
     if (isGptBotTurn(state)) {
       await ctx.scheduler.runAfter(850, internal.games.gptBotTurn, {
+        gameId,
+        expectedSequence: sequence,
+        attempt: 1,
+      });
+      return;
+    }
+    if (isGeminiBotTurn(state)) {
+      await ctx.scheduler.runAfter(850, internal.games.geminiBotTurn, {
         gameId,
         expectedSequence: sequence,
         attempt: 1,
@@ -467,6 +524,64 @@ export const botTurn = internalMutation({
 
 type PendingGptBotTurnResult = { state: GameState; memory: GptBridgeMemory | null } | null;
 type ApplyGptBotTurnResult = { sequence: number } | null;
+type PendingGeminiBotTurnResult = PendingGptBotTurnResult;
+type ApplyGeminiBotTurnResult = ApplyGptBotTurnResult;
+
+function geminiThinkingLevelForObservation(observation: ReturnType<typeof createObservation>) {
+  const phaseDefault =
+    observation.phase === "bidding"
+      ? DEFAULT_GEMINI_BRIDGE_BIDDING_THINKING_LEVEL
+      : DEFAULT_GEMINI_BRIDGE_PLAY_THINKING_LEVEL;
+  const phaseEnv =
+    observation.phase === "bidding"
+      ? process.env.GEMINI_GERMAN_BRIDGE_BIDDING_THINKING_LEVEL
+      : process.env.GEMINI_GERMAN_BRIDGE_PLAY_THINKING_LEVEL;
+  return (
+    phaseEnv?.trim() ||
+    process.env.GEMINI_GERMAN_BRIDGE_THINKING_LEVEL?.trim() ||
+    phaseDefault
+  );
+}
+
+function geminiRequestFromBridgeInput(
+  input: ReturnType<typeof buildGptBridgeInput>,
+  args: { thinkingLevel: string; maxOutputTokens: number },
+) {
+  const systemText = input
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n");
+  const userText = input
+    .filter((message) => message.role !== "system")
+    .map((message) => message.content)
+    .join("\n\n");
+  return {
+    ...(systemText
+      ? {
+          systemInstruction: {
+            parts: [{ text: systemText }],
+          },
+        }
+      : {}),
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: userText || systemText }],
+      },
+    ],
+    generationConfig: {
+      temperature: 1.0,
+      maxOutputTokens: args.maxOutputTokens,
+      thinkingConfig: {
+        thinkingLevel: args.thinkingLevel,
+      },
+    },
+  };
+}
+
+function geminiModelPath(model: string) {
+  return model.startsWith("models/") ? model : `models/${model}`;
+}
 
 export const pendingGptBotTurn = internalQuery({
   args: { gameId: v.id("games"), expectedSequence: v.number() },
@@ -496,10 +611,8 @@ export const applyGptBotTurn = internalMutation({
     reasoningEffort: v.string(),
     strategyId: v.optional(v.string()),
     decision: gptDecisionValidator,
-    allowHeuristicFallback: v.optional(v.boolean()),
     requestId: v.optional(v.string()),
     latencyMs: v.optional(v.number()),
-    fallbackReason: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<ApplyGptBotTurnResult> => {
     const game = await getGameOrThrow(ctx, args.gameId);
@@ -511,88 +624,63 @@ export const applyGptBotTurn = internalMutation({
     let event: { type: string; seatIdx: number; payload: unknown } | null = null;
     let aiTrace: BotTurnTrace | null = null;
     let nextMemory: GptBridgeMemory | null = null;
-    let fallbackReason = args.fallbackReason ?? null;
 
-    if (args.decision) {
-      try {
-        const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
-        const observation = createObservation(state, seatIdx);
-        const decision = validateGptBridgeDecision(observation, args.decision as GptBridgeDecision);
-        const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
-        const previousMemory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
-        nextMemory = nextGptBridgeMemory(previousMemory, observation, decision);
-        const trace = gptBridgeDecisionToTrace(observation, decision, {
-          model: args.model,
-          reasoningEffort: args.reasoningEffort,
-          strategyId: args.strategyId,
-          requestId: args.requestId,
-          latencyMs: args.latencyMs,
-        });
+    try {
+      const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+      const observation = createObservation(state, seatIdx);
+      const decision = validateGptBridgeDecision(observation, args.decision as GptBridgeDecision);
+      const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
+      const previousMemory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
+      nextMemory = nextGptBridgeMemory(previousMemory, observation, decision);
+      const trace = gptBridgeDecisionToTrace(observation, decision, {
+        model: args.model,
+        reasoningEffort: args.reasoningEffort,
+        strategyId: args.strategyId,
+        requestId: args.requestId,
+        latencyMs: args.latencyMs,
+      });
 
-        if (decision.kind === "bid" && state.phase === "bidding") {
-          nextState = applyPlaceBid(state, seatIdx, decision.bid);
-          event = {
-            type: "bid",
-            seatIdx,
-            payload: { bid: decision.bid, bot: true, gpt: true },
-          };
-          aiTrace = {
-            seatIdx,
-            phase: "bidding",
-            round: state.round,
-            trickIdx: state.trickIdx,
-            decision: trace,
-            observation,
-          };
-        } else if (decision.kind === "card" && state.phase === "playing") {
-          const card = findCardInSeatHand(state, seatIdx, decision.cardKey);
-          if (!card) throw new Error("gpt_card_not_in_hand");
-          nextState = applyPlayCard(state, seatIdx, card);
-          event = {
-            type: "play",
-            seatIdx,
-            payload: { card, bot: true, gpt: true },
-          };
-          aiTrace = {
-            seatIdx,
-            phase: "playing",
-            round: state.round,
-            trickIdx: state.trickIdx,
-            decision: trace,
-            observation,
-          };
-        } else {
-          throw new Error("gpt_decision_phase_mismatch");
-        }
-      } catch (error) {
-        fallbackReason = `gpt_validation_failed:${shortFailureReason(error)}`;
-        if (!args.allowHeuristicFallback) {
-          throw new Error(fallbackReason);
-        }
+      if (decision.kind === "bid" && state.phase === "bidding") {
+        nextState = applyPlaceBid(state, seatIdx, decision.bid);
+        event = {
+          type: "bid",
+          seatIdx,
+          payload: { bid: decision.bid, bot: true, gpt: true },
+        };
+        aiTrace = {
+          seatIdx,
+          phase: "bidding",
+          round: state.round,
+          trickIdx: state.trickIdx,
+          decision: trace,
+          observation,
+        };
+      } else if (decision.kind === "card" && state.phase === "playing") {
+        const card = findCardInSeatHand(state, seatIdx, decision.cardKey);
+        if (!card) throw new Error("gpt_card_not_in_hand");
+        nextState = applyPlayCard(state, seatIdx, card);
+        event = {
+          type: "play",
+          seatIdx,
+          payload: { card, bot: true, gpt: true },
+        };
+        aiTrace = {
+          seatIdx,
+          phase: "playing",
+          round: state.round,
+          trickIdx: state.trickIdx,
+          decision: trace,
+          observation,
+        };
+      } else {
+        throw new Error("gpt_decision_phase_mismatch");
       }
+    } catch (error) {
+      throw new Error(`gpt_validation_failed:${providerFailureReason("gpt", error)}`);
     }
 
     if (!nextState || !event || !aiTrace) {
-      if (!args.allowHeuristicFallback) {
-        throw new Error(fallbackReason ?? "gpt_decision_missing");
-      }
-      const fallback = applyBotTurn(state);
-      nextState = fallback.state;
-      event = {
-        ...fallback.event,
-        payload: withBotEventPayload(fallback.event.payload, { gpt: true, fallback: true }),
-      };
-      aiTrace = {
-        ...fallback.aiTrace,
-        decision: withGptFallbackTrace(fallback.aiTrace.decision, {
-          model: args.model,
-          reasoningEffort: args.reasoningEffort,
-          strategyId: args.strategyId,
-          fallbackReason: fallbackReason ?? "gpt_decision_missing",
-          requestId: args.requestId,
-          latencyMs: args.latencyMs,
-        }),
-      };
+      throw new Error("gpt_decision_missing");
     }
 
     state = nextState;
@@ -624,6 +712,7 @@ export const recordGptBotTurnFailure = internalMutation({
     failureReason: v.string(),
     requestId: v.optional(v.string()),
     latencyMs: v.optional(v.number()),
+    debug: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const game = await getGameOrThrow(ctx, args.gameId);
@@ -646,6 +735,7 @@ export const recordGptBotTurnFailure = internalMutation({
         reason: args.failureReason,
         requestId: args.requestId ?? null,
         latencyMs: args.latencyMs ?? null,
+        ...(args.debug !== undefined ? { debug: args.debug } : {}),
       },
     });
 
@@ -683,7 +773,6 @@ export const gptBotTurn = internalAction({
     );
     const maxAttempts = envInteger("OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS", DEFAULT_GPT_BRIDGE_MAX_ATTEMPTS);
     const retryDelayMs = envInteger("OPENAI_GERMAN_BRIDGE_RETRY_DELAY_MS", DEFAULT_GPT_BRIDGE_RETRY_DELAY_MS);
-    const allowHeuristicFallback = envBoolean("OPENAI_GERMAN_BRIDGE_ALLOW_HEURISTIC_FALLBACK", false);
     const customStrategy = process.env.OPENAI_GERMAN_BRIDGE_STRATEGY_CARD;
     const strategy = customStrategy?.trim()
       ? customLlmBridgeStrategyCard(customStrategy)
@@ -694,6 +783,8 @@ export const gptBotTurn = internalAction({
     const observation = createObservation(pending.state, seatIdx);
     const startedAt = Date.now();
     let requestId: string | undefined;
+    let outputText = "";
+    let parsedDecision: unknown = null;
 
     try {
       if (!apiKey) throw new Error("openai_api_key_missing");
@@ -729,9 +820,10 @@ export const gptBotTurn = internalAction({
 
       const incompleteReason = incompleteReasonFromOpenAiResponse(payload);
       if (incompleteReason) throw new Error(`openai_incomplete:${incompleteReason}`);
-      const outputText = outputTextFromOpenAiResponse(payload);
+      outputText = outputTextFromOpenAiResponse(payload);
       if (!outputText.trim()) throw new Error("openai_empty_output");
       const parsed = parseGptBridgeDecision(outputText);
+      parsedDecision = parsed;
       const decision = validateGptBridgeDecision(observation, parsed);
       const result: ApplyGptBotTurnResult = await ctx.runMutation(internal.games.applyGptBotTurn, {
         gameId: args.gameId,
@@ -740,42 +832,305 @@ export const gptBotTurn = internalAction({
         reasoningEffort,
         strategyId: strategy.id,
         decision,
-        allowHeuristicFallback: false,
         requestId,
         latencyMs: Date.now() - startedAt,
       });
       return result;
     } catch (error) {
-      const failureReason = shortFailureReason(error);
-      if (!allowHeuristicFallback) {
-        await ctx.runMutation(internal.games.recordGptBotTurnFailure, {
-          gameId: args.gameId,
-          expectedSequence: args.expectedSequence,
-          model,
-          reasoningEffort,
-          strategyId: strategy.id,
-          attempt: args.attempt ?? 1,
-          maxAttempts,
-          retryDelayMs,
-          failureReason,
-          requestId,
-          latencyMs: Date.now() - startedAt,
-        });
-        return null;
-      }
-      const result: ApplyGptBotTurnResult = await ctx.runMutation(internal.games.applyGptBotTurn, {
+      const failureReason = providerFailureReason("gpt", error);
+      const attempt = args.attempt ?? 1;
+      await ctx.runMutation(internal.games.recordGptBotTurnFailure, {
         gameId: args.gameId,
         expectedSequence: args.expectedSequence,
         model,
         reasoningEffort,
         strategyId: strategy.id,
-        decision: null,
-        allowHeuristicFallback: true,
+        attempt,
+        maxAttempts,
+        retryDelayMs,
+        failureReason,
         requestId,
         latencyMs: Date.now() - startedAt,
-        fallbackReason: failureReason,
+        debug: llmFailureDebug(observation, { outputText, parsedDecision }),
+      });
+      return null;
+    }
+  },
+});
+
+export const pendingGeminiBotTurn = internalQuery({
+  args: { gameId: v.id("games"), expectedSequence: v.number() },
+  handler: async (ctx, args): Promise<PendingGeminiBotTurnResult> => {
+    const game = await ctx.db.get(args.gameId);
+    if (!game || game.status !== "active" || game.sequence !== args.expectedSequence) {
+      return null;
+    }
+    const stateDoc = await ctx.db
+      .query("gameStates")
+      .withIndex("by_gameId", (q) => q.eq("gameId", game._id))
+      .unique();
+    const state = stateDoc?.state as GameState | undefined;
+    if (!state || !isGeminiBotTurn(state)) return null;
+    const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+    const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
+    const memory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
+    return { state, memory };
+  },
+});
+
+export const applyGeminiBotTurn = internalMutation({
+  args: {
+    gameId: v.id("games"),
+    expectedSequence: v.number(),
+    model: v.string(),
+    thinkingLevel: v.string(),
+    strategyId: v.optional(v.string()),
+    decision: gptDecisionValidator,
+    requestId: v.optional(v.string()),
+    latencyMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<ApplyGeminiBotTurnResult> => {
+    const game = await getGameOrThrow(ctx, args.gameId);
+    if (game.status !== "active" || game.sequence !== args.expectedSequence) return null;
+    let state = await getStateOrThrow(ctx, game._id);
+    if (!isGeminiBotTurn(state)) return null;
+
+    let nextState: GameState | null = null;
+    let event: { type: string; seatIdx: number; payload: unknown } | null = null;
+    let aiTrace: BotTurnTrace | null = null;
+    let nextMemory: GptBridgeMemory | null = null;
+
+    try {
+      const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+      const observation = createObservation(state, seatIdx);
+      const decision = validateGptBridgeDecision(observation, args.decision as GptBridgeDecision);
+      const memoryDoc = await getAiBotMemory(ctx, game._id, seatIdx);
+      const previousMemory = memoryDoc ? (memoryDoc.memory as GptBridgeMemory) : null;
+      nextMemory = nextGptBridgeMemory(previousMemory, observation, decision);
+      const trace = gptBridgeDecisionToTrace(observation, decision, {
+        model: args.model,
+        reasoningEffort: args.thinkingLevel,
+        strategyId: args.strategyId,
+        requestId: args.requestId,
+        latencyMs: args.latencyMs,
+        provider: "google",
+        personality: "gemini",
+        policyId: GEMINI_BRIDGE_POLICY_ID,
+      });
+
+      if (decision.kind === "bid" && state.phase === "bidding") {
+        nextState = applyPlaceBid(state, seatIdx, decision.bid);
+        event = {
+          type: "bid",
+          seatIdx,
+          payload: { bid: decision.bid, bot: true, gemini: true },
+        };
+        aiTrace = {
+          seatIdx,
+          phase: "bidding",
+          round: state.round,
+          trickIdx: state.trickIdx,
+          decision: trace,
+          observation,
+        };
+      } else if (decision.kind === "card" && state.phase === "playing") {
+        const card = findCardInSeatHand(state, seatIdx, decision.cardKey);
+        if (!card) throw new Error("gemini_card_not_in_hand");
+        nextState = applyPlayCard(state, seatIdx, card);
+        event = {
+          type: "play",
+          seatIdx,
+          payload: { card, bot: true, gemini: true },
+        };
+        aiTrace = {
+          seatIdx,
+          phase: "playing",
+          round: state.round,
+          trickIdx: state.trickIdx,
+          decision: trace,
+          observation,
+        };
+      } else {
+        throw new Error("gemini_decision_phase_mismatch");
+      }
+    } catch (error) {
+      throw new Error(`gemini_validation_failed:${providerFailureReason("gemini", error)}`);
+    }
+
+    if (!nextState || !event || !aiTrace) {
+      throw new Error("gemini_decision_missing");
+    }
+
+    state = nextState;
+    await writeGameState(ctx, game._id, state);
+    if (nextMemory && aiTrace) {
+      await writeAiBotMemory(ctx, game._id, aiTrace.seatIdx, nextMemory);
+    }
+    const sequence = await appendEvent(ctx, game, event);
+    await appendAiDecisionTrace(ctx, {
+      gameId: game._id,
+      sequence,
+      ...aiTrace,
+    });
+    await scheduleNext(ctx, game._id, state, sequence);
+    return { sequence };
+  },
+});
+
+export const recordGeminiBotTurnFailure = internalMutation({
+  args: {
+    gameId: v.id("games"),
+    expectedSequence: v.number(),
+    model: v.string(),
+    thinkingLevel: v.string(),
+    strategyId: v.optional(v.string()),
+    attempt: v.number(),
+    maxAttempts: v.number(),
+    retryDelayMs: v.number(),
+    failureReason: v.string(),
+    requestId: v.optional(v.string()),
+    latencyMs: v.optional(v.number()),
+    debug: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const game = await getGameOrThrow(ctx, args.gameId);
+    if (game.status !== "active" || game.sequence !== args.expectedSequence) return null;
+    const state = await getStateOrThrow(ctx, game._id);
+    if (!isGeminiBotTurn(state)) return null;
+
+    const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+    const shouldRetry = args.attempt < args.maxAttempts;
+    const sequence = await appendEvent(ctx, game, {
+      type: shouldRetry ? "gemini_turn_retry" : "gemini_turn_blocked",
+      seatIdx,
+      payload: {
+        gemini: true,
+        model: args.model,
+        thinkingLevel: args.thinkingLevel,
+        strategyId: args.strategyId ?? null,
+        attempt: args.attempt,
+        maxAttempts: args.maxAttempts,
+        reason: args.failureReason,
+        requestId: args.requestId ?? null,
+        latencyMs: args.latencyMs ?? null,
+        ...(args.debug !== undefined ? { debug: args.debug } : {}),
+      },
+    });
+
+    if (shouldRetry) {
+      await ctx.scheduler.runAfter(args.retryDelayMs, internal.games.geminiBotTurn, {
+        gameId: game._id,
+        expectedSequence: sequence,
+        attempt: args.attempt + 1,
+      });
+    }
+
+    return { sequence, retry: shouldRetry };
+  },
+});
+
+export const geminiBotTurn = internalAction({
+  args: {
+    gameId: v.id("games"),
+    expectedSequence: v.number(),
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<ApplyGeminiBotTurnResult> => {
+    const pending: PendingGeminiBotTurnResult = await ctx.runQuery(
+      internal.games.pendingGeminiBotTurn,
+      { gameId: args.gameId, expectedSequence: args.expectedSequence },
+    );
+    if (!pending) return null;
+
+    const model = process.env.GEMINI_GERMAN_BRIDGE_MODEL ?? DEFAULT_GEMINI_BRIDGE_MODEL;
+    const maxOutputTokens = envInteger(
+      "GEMINI_GERMAN_BRIDGE_MAX_OUTPUT_TOKENS",
+      DEFAULT_GEMINI_BRIDGE_MAX_OUTPUT_TOKENS,
+    );
+    const maxAttempts = envInteger("GEMINI_GERMAN_BRIDGE_MAX_ATTEMPTS", DEFAULT_GEMINI_BRIDGE_MAX_ATTEMPTS);
+    const retryDelayMs = envInteger("GEMINI_GERMAN_BRIDGE_RETRY_DELAY_MS", DEFAULT_GEMINI_BRIDGE_RETRY_DELAY_MS);
+    const customStrategy = process.env.GEMINI_GERMAN_BRIDGE_STRATEGY_CARD;
+    const strategy = customStrategy?.trim()
+      ? customLlmBridgeStrategyCard(customStrategy)
+      : getLlmBridgeStrategyCard(process.env.GEMINI_GERMAN_BRIDGE_STRATEGY_ID);
+    const apiKey = process.env.GEMINI_API_KEY;
+    const seatIdx =
+      pending.state.phase === "bidding" ? pending.state.bidTurn : pending.state.turnIdx;
+    const observation = createObservation(pending.state, seatIdx);
+    const thinkingLevel = geminiThinkingLevelForObservation(observation);
+    const startedAt = Date.now();
+    let requestId: string | undefined;
+    let outputText = "";
+    let parsedDecision: unknown = null;
+
+    try {
+      if (!apiKey) throw new Error("gemini_api_key_missing");
+
+      const response = await fetch(
+        `${GEMINI_API_BASE_URL}/${geminiModelPath(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify(
+            geminiRequestFromBridgeInput(
+              buildGptBridgeInput(observation, { strategy, memory: pending.memory }),
+              { thinkingLevel, maxOutputTokens },
+            ),
+          ),
+        },
+      );
+      const payload: unknown = await response.json();
+      requestId =
+        response.headers.get("x-request-id") ??
+        response.headers.get("x-goog-request-id") ??
+        undefined;
+      if (!response.ok) {
+        throw new Error(
+          `gemini_${response.status}:${shortFailureReason(
+            errorMessageFromGeminiResponse(payload) ?? response.statusText,
+          )}`,
+        );
+      }
+
+      const finishReason = geminiFinishReason(payload);
+      if (finishReason && finishReason !== "STOP") throw new Error(`gemini_finish:${finishReason}`);
+      outputText = outputTextFromGeminiResponse(payload);
+      if (!outputText.trim()) throw new Error("gemini_empty_output");
+      const parsed = parseGptBridgeDecision(outputText);
+      parsedDecision = parsed;
+      const decision = validateGptBridgeDecision(observation, parsed);
+      const result: ApplyGeminiBotTurnResult = await ctx.runMutation(internal.games.applyGeminiBotTurn, {
+        gameId: args.gameId,
+        expectedSequence: args.expectedSequence,
+        model,
+        thinkingLevel,
+        strategyId: strategy.id,
+        decision,
+        requestId,
+        latencyMs: Date.now() - startedAt,
       });
       return result;
+    } catch (error) {
+      const failureReason = providerFailureReason("gemini", error);
+      const attempt = args.attempt ?? 1;
+      await ctx.runMutation(internal.games.recordGeminiBotTurnFailure, {
+        gameId: args.gameId,
+        expectedSequence: args.expectedSequence,
+        model,
+        thinkingLevel,
+        strategyId: strategy.id,
+        attempt,
+        maxAttempts,
+        retryDelayMs,
+        failureReason,
+        requestId,
+        latencyMs: Date.now() - startedAt,
+        debug: llmFailureDebug(observation, { outputText, parsedDecision }),
+      });
+      return null;
     }
   },
 });
@@ -841,6 +1196,7 @@ export const aiDebug = query({
           traceCount: 0,
           championTraceCount: 0,
           gptTraceCount: 0,
+          geminiTraceCount: 0,
           fallbackCount: 0,
           bySeat: [],
         },
@@ -882,6 +1238,12 @@ export const aiDebug = query({
             trace.personality === "gpt" ||
             trace.policyId.startsWith("openai:") ||
             trace.requestedPolicyId.startsWith("openai:"),
+        ).length,
+        geminiTraceCount: traces.filter(
+          (trace) =>
+            trace.personality === "gemini" ||
+            trace.policyId.startsWith("google:") ||
+            trace.requestedPolicyId.startsWith("google:"),
         ).length,
         fallbackCount: traces.filter((trace) => trace.fallback).length,
         bySeat,

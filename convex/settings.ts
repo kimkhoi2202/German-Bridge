@@ -25,6 +25,7 @@ const botMood = v.union(
   v.literal("aggressive"),
   v.literal("champion"),
   v.literal("gpt"),
+  v.literal("gemini"),
 );
 
 function clampInt(value: number, min: number, max: number) {

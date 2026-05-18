@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { Card } from "../cards";
 import type { BotObservation } from "../botObservation";
 import {
+  DEFAULT_GEMINI_BRIDGE_BIDDING_THINKING_LEVEL,
+  DEFAULT_GEMINI_BRIDGE_MODEL,
+  DEFAULT_GEMINI_BRIDGE_PLAY_THINKING_LEVEL,
+  DEFAULT_GPT_BRIDGE_REASONING_EFFORT,
+  GEMINI_BRIDGE_POLICY_ID,
   buildGptBridgeInput,
   buildGptBridgeTextFormat,
+  gptBridgeDecisionToTrace,
   parseGptBridgeDecision,
   validateGptBridgeDecision,
 } from "./gptBridgeBot";
@@ -71,6 +77,16 @@ function observation(overrides: Partial<BotObservation> = {}): BotObservation {
 }
 
 describe("gptBridgeBot compact protocol", () => {
+  it("defaults live GPT calls to minimal reasoning", () => {
+    expect(DEFAULT_GPT_BRIDGE_REASONING_EFFORT).toBe("minimal");
+  });
+
+  it("defaults Gemini to Gemini 3 Flash with explicit tiered thinking", () => {
+    expect(DEFAULT_GEMINI_BRIDGE_MODEL).toBe("gemini-3-flash-preview");
+    expect(DEFAULT_GEMINI_BRIDGE_BIDDING_THINKING_LEVEL).toBe("high");
+    expect(DEFAULT_GEMINI_BRIDGE_PLAY_THINKING_LEVEL).toBe("medium");
+  });
+
   it("asks for compact text instead of strict JSON schema", () => {
     expect(buildGptBridgeTextFormat(observation())).toEqual({ type: "text" });
     const input = buildGptBridgeInput(observation());
@@ -85,6 +101,7 @@ describe("gptBridgeBot compact protocol", () => {
     expect(input[1]?.content).toContain("tablesignals:");
     expect(input[1]?.content).toContain("trumplens=");
     expect(input[1]?.content).toContain("tacticalmode=");
+    expect(input[1]?.content).toContain("execplan=");
     expect(input[1]?.content).toContain("claimsStrong");
     expect(input[1]?.content).toContain("Strategy lens, not hard rules");
     expect(input[1]?.content).toContain("adaptive-table-reader-v2");
@@ -113,13 +130,18 @@ describe("gptBridgeBot compact protocol", () => {
           { trick: 1, order: 3, playerIdx: 2, card: C("3", "c", 0, "p2") },
         ],
         legalCards: [C("A", "s", 0, "a")],
+        decks: 2,
       }),
     );
     expect(playInput[1]?.content).toContain("Private play process");
     expect(playInput[1]?.content).toContain("Use privateThread as your own hand memory");
     expect(playInput[1]?.content).toContain("cardlens=");
     expect(playInput[1]?.content).toContain("nowWin");
+    expect(playInput[1]?.content).toContain("dupLive");
+    expect(playInput[1]?.content).toContain("execplan=target1/won0/need1");
+    expect(playInput[1]?.content).toContain("winNow[As-0-a");
     expect(playInput[1]?.content).toContain("opponent needs");
+    expect(playInput[1]?.content).toContain("duplicateThreat matters");
     expect(playInput[1]?.content).toContain("Never lead trump by habit");
     expect(playInput[1]?.content).toContain("never auto-play strongest trump");
     expect(playInput[1]?.content).toContain("preserve trump for endgame control");
@@ -212,5 +234,21 @@ describe("gptBridgeBot compact protocol", () => {
     });
     const card = validateGptBridgeDecision(cardObservation, parseGptBridgeDecision("C:As-0-a"));
     expect(card).toMatchObject({ kind: "card", cardKey: "As-0-a", confidence: 0.7 });
+  });
+
+  it("can stamp Gemini traces separately from GPT traces", () => {
+    const obs = observation();
+    const decision = validateGptBridgeDecision(obs, parseGptBridgeDecision("B:1"));
+    const trace = gptBridgeDecisionToTrace(obs, decision, {
+      model: "gemini-3-flash-preview",
+      reasoningEffort: "high",
+      provider: "google",
+      personality: "gemini",
+      policyId: GEMINI_BRIDGE_POLICY_ID,
+    });
+    expect(trace.personality).toBe("gemini");
+    expect(trace.policyId).toBe("google:german-bridge-gemini");
+    expect(trace.requestedPolicyId).toBe("google:gemini-3-flash-preview");
+    expect(trace.fallback).toBe(false);
   });
 });

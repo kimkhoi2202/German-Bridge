@@ -28,6 +28,7 @@ const settingsFields = {
     v.literal("aggressive"),
     v.literal("champion"),
     v.literal("gpt"),
+    v.literal("gemini"),
   ),
   updatedAt: v.number(),
 };
@@ -62,6 +63,7 @@ export default defineSchema({
         v.literal("aggressive"),
         v.literal("champion"),
         v.literal("gpt"),
+        v.literal("gemini"),
       ),
     ),
     sequence: v.number(),
@@ -89,6 +91,7 @@ export default defineSchema({
       v.literal("aggressive"),
       v.literal("champion"),
       v.literal("gpt"),
+      v.literal("gemini"),
     ),
     joinedAt: v.number(),
   })
@@ -130,6 +133,7 @@ export default defineSchema({
       v.literal("aggressive"),
       v.literal("champion"),
       v.literal("gpt"),
+      v.literal("gemini"),
     ),
     checkpointId: v.optional(v.string()),
     fallback: v.boolean(),

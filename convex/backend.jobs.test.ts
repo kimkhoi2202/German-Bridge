@@ -37,6 +37,71 @@ async function flushJobs(t: TestClient) {
   await t.finishAllScheduledFunctions(() => vi.runAllTimers());
 }
 
+function openAiTextResponse(outputText: string, requestId: string) {
+  return new Response(JSON.stringify({ output_text: outputText }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": requestId,
+    },
+  });
+}
+
+function openAiActionFromRequest(init: RequestInit | undefined, invalid: boolean) {
+  const body = JSON.parse(String(init?.body ?? "{}")) as {
+    input?: { role: string; content: string }[];
+  };
+  const prompt = body.input?.map((item) => item.content).join("\n") ?? "";
+  const isCardTurn = prompt.includes("Final answer format: exactly C:<legalCardKey>");
+  if (invalid) return isCardTurn ? "C:not-in-hand" : "B:99";
+  if (isCardTurn) {
+    const legalCards = prompt.match(/Legal cards:\s*([^\n]+)/)?.[1] ?? "";
+    const firstCardKey = legalCards.trim().split(/\s+/)[0]?.split("(")[0];
+    return `C:${firstCardKey}`;
+  }
+  const firstBid = prompt.match(/Legal bids:\s*([0-9,]+)/)?.[1]?.split(",")[0] ?? "0";
+  return `B:${firstBid}`;
+}
+
+function geminiTextResponse(outputText: string, requestId: string) {
+  return new Response(
+    JSON.stringify({
+      candidates: [
+        {
+          finishReason: "STOP",
+          content: { parts: [{ text: outputText }] },
+        },
+      ],
+    }),
+    {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "x-goog-request-id": requestId,
+      },
+    },
+  );
+}
+
+function geminiActionFromRequest(init: RequestInit | undefined, invalid: boolean) {
+  const body = JSON.parse(String(init?.body ?? "{}")) as {
+    contents?: { parts?: { text?: string }[] }[];
+  };
+  const prompt = body.contents
+    ?.flatMap((content) => content.parts ?? [])
+    .map((part) => part.text ?? "")
+    .join("\n") ?? "";
+  const isCardTurn = prompt.includes("Final answer format: exactly C:<legalCardKey>");
+  if (invalid) return isCardTurn ? "C:not-in-hand" : "B:99";
+  if (isCardTurn) {
+    const legalCards = prompt.match(/Legal cards:\s*([^\n]+)/)?.[1] ?? "";
+    const firstCardKey = legalCards.trim().split(/\s+/)[0]?.split("(")[0];
+    return `C:${firstCardKey}`;
+  }
+  const firstBid = prompt.match(/Legal bids:\s*([0-9,]+)/)?.[1]?.split(",")[0] ?? "0";
+  return `B:${firstBid}`;
+}
+
 async function currentGame(t: TestClient, gameId: Id<"games">) {
   const game = await t.run(async (ctx) => await ctx.db.get(gameId));
   if (!game) throw new Error("Missing game");
@@ -369,7 +434,6 @@ describe("Convex backend game jobs", () => {
     vi.useFakeTimers();
     vi.stubEnv("OPENAI_API_KEY", "");
     vi.stubEnv("OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS", "1");
-    vi.stubEnv("OPENAI_GERMAN_BRIDGE_ALLOW_HEURISTIC_FALLBACK", "false");
     try {
       const t = convexTest({ schema, modules }) as TestHarness;
       const player = await authedClient(t, "qa_gpt_room");
@@ -424,6 +488,198 @@ describe("Convex backend game jobs", () => {
       });
       expect(traces).toHaveLength(0);
     } finally {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries and logs illegal GPT output instead of falling back to heuristics", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS", "2");
+    let callCount = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      callCount += 1;
+      const outputText = openAiActionFromRequest(init, callCount === 1);
+      return openAiTextResponse(outputText, callCount === 1 ? "req_invalid_move" : `req_valid_${callCount}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const t = convexTest({ schema, modules }) as TestHarness;
+      const player = await authedClient(t, "qa_gpt_illegal_retry");
+
+      const room = await player.mutation(api.rooms.create, {
+        playerCount: 4,
+        decks: 2,
+        tricksPerHand: 2,
+        botMood: "gpt",
+      });
+      await player.mutation(api.rooms.start, { gameId: room.gameId, botMood: "gpt" });
+
+      let retryEvent:
+        | {
+            type: string;
+            payload: {
+              reason?: string;
+              gpt?: boolean;
+              attempt?: number;
+              debug?: {
+                outputText?: string;
+                legalBids?: number[];
+                legalCards?: string[];
+                decks?: number;
+              };
+            };
+          }
+        | undefined;
+      for (let step = 0; step < 20 && !retryEvent; step += 1) {
+        await flushJobs(t);
+        const view = await player.query(api.games.watch, { gameId: room.gameId });
+        const events = await t.run(async (ctx) => {
+          return await ctx.db
+            .query("gameEvents")
+            .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+            .take(100);
+        });
+        retryEvent = events.find((event) => event.type === "gpt_turn_retry") as typeof retryEvent;
+        if (retryEvent) break;
+
+        if (view.state?.phase === "bidding" && view.legalBids.length > 0) {
+          await player.mutation(api.games.placeBid, { gameId: room.gameId, bid: view.legalBids[0] });
+        } else if (view.state?.phase === "playing" && view.legalCardKeys.length > 0) {
+          await player.mutation(api.games.playCard, { gameId: room.gameId, cardKey: view.legalCardKeys[0] });
+        } else if (view.state?.phase === "round-end") {
+          await player.mutation(api.games.advanceRound, { gameId: room.gameId });
+        }
+      }
+
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(retryEvent).toBeTruthy();
+      expect(retryEvent?.payload).toMatchObject({
+        gpt: true,
+        attempt: 1,
+      });
+      expect(retryEvent?.payload.reason).toMatch(/^gpt_/);
+      expect(retryEvent?.payload.debug?.outputText).toMatch(/^(B:99|C:not-in-hand)$/);
+      expect(retryEvent?.payload.debug?.decks).toBe(2);
+      expect(
+        (retryEvent?.payload.debug?.legalBids?.length ?? 0) +
+          (retryEvent?.payload.debug?.legalCards?.length ?? 0),
+      ).toBeGreaterThan(0);
+
+      const traces = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("aiDecisionTraces")
+          .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+          .take(100);
+      });
+      expect(traces.some((trace) => trace.fallback)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
+  });
+
+  it("routes Gemini bots through Google with explicit thinking and no heuristic fallback", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    vi.stubEnv("GEMINI_GERMAN_BRIDGE_MAX_ATTEMPTS", "2");
+    let callCount = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      callCount += 1;
+      const outputText = geminiActionFromRequest(init, callCount === 1);
+      return geminiTextResponse(outputText, callCount === 1 ? "gemini_invalid_move" : `gemini_valid_${callCount}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const t = convexTest({ schema, modules }) as TestHarness;
+      const player = await authedClient(t, "qa_gemini_illegal_retry");
+
+      const room = await player.mutation(api.rooms.create, {
+        playerCount: 4,
+        decks: 2,
+        tricksPerHand: 2,
+        botMood: "gemini",
+      });
+      await player.mutation(api.rooms.start, { gameId: room.gameId, botMood: "gemini" });
+
+      let retryEvent:
+        | {
+            type: string;
+            payload: {
+              reason?: string;
+              gemini?: boolean;
+              attempt?: number;
+              thinkingLevel?: string;
+              debug?: {
+                outputText?: string;
+                legalBids?: number[];
+                legalCards?: string[];
+                decks?: number;
+              };
+            };
+          }
+        | undefined;
+      for (let step = 0; step < 20 && !retryEvent; step += 1) {
+        await flushJobs(t);
+        const view = await player.query(api.games.watch, { gameId: room.gameId });
+        const events = await t.run(async (ctx) => {
+          return await ctx.db
+            .query("gameEvents")
+            .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+            .take(100);
+        });
+        retryEvent = events.find((event) => event.type === "gemini_turn_retry") as typeof retryEvent;
+        if (retryEvent) break;
+
+        if (view.state?.phase === "bidding" && view.legalBids.length > 0) {
+          await player.mutation(api.games.placeBid, { gameId: room.gameId, bid: view.legalBids[0] });
+        } else if (view.state?.phase === "playing" && view.legalCardKeys.length > 0) {
+          await player.mutation(api.games.playCard, { gameId: room.gameId, cardKey: view.legalCardKeys[0] });
+        } else if (view.state?.phase === "round-end") {
+          await player.mutation(api.games.advanceRound, { gameId: room.gameId });
+        }
+      }
+
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        "gemini-3-flash-preview:generateContent",
+      );
+      const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}")) as {
+        generationConfig?: {
+          temperature?: number;
+          thinkingConfig?: { thinkingLevel?: string };
+        };
+      };
+      expect(firstBody.generationConfig?.temperature).toBe(1);
+      expect(firstBody.generationConfig?.thinkingConfig?.thinkingLevel).toBe("high");
+      expect(retryEvent).toBeTruthy();
+      expect(retryEvent?.payload).toMatchObject({
+        gemini: true,
+        attempt: 1,
+        thinkingLevel: "high",
+      });
+      expect(retryEvent?.payload.reason).toMatch(/^gemini_/);
+      expect(retryEvent?.payload.debug?.outputText).toMatch(/^(B:99|C:not-in-hand)$/);
+      expect(retryEvent?.payload.debug?.decks).toBe(2);
+      expect(
+        (retryEvent?.payload.debug?.legalBids?.length ?? 0) +
+          (retryEvent?.payload.debug?.legalCards?.length ?? 0),
+      ).toBeGreaterThan(0);
+
+      const traces = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("aiDecisionTraces")
+          .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+          .take(100);
+      });
+      expect(traces.some((trace) => trace.fallback)).toBe(false);
+      expect(traces.some((trace) => trace.personality === "gemini")).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
       vi.unstubAllEnvs();
       vi.useRealTimers();
     }

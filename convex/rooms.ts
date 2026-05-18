@@ -22,6 +22,7 @@ const moodValidator = v.union(
   v.literal("aggressive"),
   v.literal("champion"),
   v.literal("gpt"),
+  v.literal("gemini"),
 );
 
 const INVITE_CODE_DIGITS = 3;

@@ -5,7 +5,14 @@ export const MIN_PLAYERS = 3;
 export const MAX_PLAYERS = 12;
 export const MAX_PLAYER_NAME_LENGTH = 24;
 
-const PERSONALITIES: readonly Personality[] = ["cautious", "mixed", "aggressive", "champion", "gpt"];
+const PERSONALITIES: readonly Personality[] = [
+  "cautious",
+  "mixed",
+  "aggressive",
+  "champion",
+  "gpt",
+  "gemini",
+];
 
 export function clampInteger(
   value: unknown,

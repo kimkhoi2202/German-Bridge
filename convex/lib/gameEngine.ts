@@ -118,6 +118,12 @@ export function isGptBotTurn(state: GameState) {
   return state.players[seatIdx]?.personality === "gpt";
 }
 
+export function isGeminiBotTurn(state: GameState) {
+  if (!isBotTurn(state)) return false;
+  const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+  return state.players[seatIdx]?.personality === "gemini";
+}
+
 export function applyBotTurn(state: GameState) {
   if (state.phase === "bidding") {
     const seatIdx = state.bidTurn;
