@@ -4,7 +4,6 @@ import { useEffect, useId, useState } from "react";
 import { motion } from "motion/react";
 import { useMatch } from "@/store/match";
 import { lastBidderRestriction, type GameState } from "@/lib/game";
-import { handEquity } from "@/lib/bot";
 import { stateTransition } from "@/lib/uiMotion";
 import { CardMark } from "@/components/CardMark";
 import { Button } from "@/components/base/buttons/button";
@@ -15,6 +14,7 @@ interface BiddingDialProps {
   state?: GameState | null;
   onBid?: (value: number) => void;
   viewerIdx?: number;
+  isSubmitting?: boolean;
 }
 
 export function BiddingDial({
@@ -22,6 +22,7 @@ export function BiddingDial({
   state: stateProp,
   onBid,
   viewerIdx = 0,
+  isSubmitting = false,
 }: BiddingDialProps) {
   const localState = useMatch((s) => s.state);
   const localPlaceBid = useMatch((s) => s.bid);
@@ -29,43 +30,102 @@ export function BiddingDial({
   const titleId = useId();
 
   const isBidding = !!state && state.phase === "bidding";
+  const viewerIsHuman = isBidding && state.players[viewerIdx]?.isHuman === true;
   const yourTurn =
     isBidding &&
     state.bidTurn === viewerIdx &&
-    state.players[viewerIdx]?.isHuman === true;
-  const canBid = yourTurn;
+    viewerIsHuman;
+  const canPrepareBid = viewerIsHuman && !isSubmitting;
   const isPanel = variant === "panel";
 
-  const trumpSuit = state?.trumpCard?.s ?? null;
-  const hint = state && state.hands[0]
-    ? Math.round(handEquity(state.hands[0], trumpSuit))
-    : null;
   const placedBids = state ? state.bids.filter((b): b is number => b != null) : [];
   const placedCount = placedBids.length;
   const placedBidTotal = state ? placedBids.reduce((acc, bid) => acc + bid, 0) : 0;
   const isLastBidder = isBidding && state ? placedCount === state.players.length - 1 : false;
   const restricted =
     isLastBidder && state ? lastBidderRestriction(state.bids, state.tricksTotal) : null;
-  const tricksTotal = state?.tricksTotal ?? 0;
+  const bidKey = state ? `${state.round}:${state.trickIdx}:${viewerIdx}` : "";
+  const viewerHasBid = state?.bids[viewerIdx] != null;
+  const activeBidderName = state?.players[state.bidTurn]?.name ?? "another player";
 
-  const [v, setV] = useState(0);
+  const [v, setV] = useState<number | null>(null);
+  const [queuedBid, setQueuedBid] = useState<number | null>(null);
+  const [submittedBidKey, setSubmittedBidKey] = useState<string | null>(null);
+
   useEffect(() => {
-    if (isBidding && tricksTotal) {
-      const preferred = Math.min(hint ?? 1, tricksTotal);
-      if (preferred !== restricted) {
-        setV(preferred);
-        return;
-      }
-      const fallback = Array.from({ length: tricksTotal + 1 }, (_, i) => i)
-        .find((n) => n !== restricted);
-      setV(fallback ?? 0);
-    }
-  }, [hint, restricted, isBidding, state?.round, tricksTotal]);
+    setV(null);
+    setQueuedBid(null);
+    setSubmittedBidKey(null);
+  }, [bidKey, isBidding]);
 
-  if (!state || !isBidding) return null;
+  useEffect(() => {
+    if (
+      !state ||
+      !isBidding ||
+      !yourTurn ||
+      queuedBid == null ||
+      isSubmitting ||
+      submittedBidKey === bidKey ||
+      viewerHasBid
+    ) {
+      return;
+    }
+
+    if (queuedBid < 0 || queuedBid > state.tricksTotal) {
+      setQueuedBid(null);
+      return;
+    }
+    if (restricted === queuedBid) {
+      setQueuedBid(null);
+      return;
+    }
+
+    setSubmittedBidKey(bidKey);
+    if (onBid) onBid(queuedBid);
+    else localPlaceBid(viewerIdx, queuedBid);
+  }, [
+    bidKey,
+    isBidding,
+    isSubmitting,
+    localPlaceBid,
+    onBid,
+    queuedBid,
+    restricted,
+    state,
+    submittedBidKey,
+    viewerHasBid,
+    viewerIdx,
+    yourTurn,
+  ]);
+
+  if (!state || !isBidding || viewerHasBid || submittedBidKey === bidKey) return null;
 
   const opts = Array.from({ length: state.tricksTotal + 1 }, (_, i) => i);
-  const submitDisabled = restricted === v;
+  const submitDisabled = v == null || isSubmitting || (yourTurn && restricted === v);
+  const submitTitle =
+    yourTurn && restricted === v
+      ? "Total bids can't equal total cards"
+      : v == null
+        ? "Choose a bid first"
+        : "";
+  const handleSubmitBid = () => {
+    if (submitDisabled || v == null) return;
+    if (!yourTurn) {
+      setQueuedBid(v);
+      return;
+    }
+    setSubmittedBidKey(bidKey);
+    if (onBid) onBid(v);
+    else localPlaceBid(viewerIdx, v);
+  };
+  const handlePickBid = (bid: number, isRestricted: boolean) => {
+    if (isRestricted || !canPrepareBid) return;
+    setV((current) => {
+      const next = current === bid ? null : bid;
+      if (!yourTurn && next == null && queuedBid === bid) setQueuedBid(null);
+      return next;
+    });
+  };
 
   return (
     <div
@@ -84,7 +144,7 @@ export function BiddingDial({
         <div className="gb-bid-head">
           <div className="gb-bid-titleblock">
             <h2 id={titleId} className="gb-bid-title">
-              Bid
+              {yourTurn ? "Your bid" : `Waiting for ${activeBidderName}`}
             </h2>
           </div>
           {state.trumpCard && (
@@ -95,69 +155,74 @@ export function BiddingDial({
           )}
           <div className="gb-bid-context">
             <span className="gb-bid-meta-chip mono">
-              {placedBidTotal} bid / {state.tricksTotal} total
+              Total bids: {placedBidTotal}
             </span>
           </div>
         </div>
 
-        <div className="gb-bid-numbers">
-          {opts.map((n) => {
-            const isRestricted = restricted === n;
-            const isOn = v === n;
-            return (
-              <button
-                type="button"
-                key={n}
-                disabled={isRestricted || !canBid}
-                title={isRestricted ? "Total can't equal tricks" : ""}
-                aria-label={
-                  isRestricted
-                    ? `Bid ${n} unavailable; total cannot equal tricks`
-                    : `Bid ${n}`
-                }
-                aria-pressed={isOn}
-                onClick={() => {
-                  if (!isRestricted && canBid) {
-                    setV(n);
-                  }
-                }}
-                className={
-                  "gb-bid-num" + (isOn ? " on" : "") + (isRestricted ? " restricted" : "")
-                }
-              >
-                <span>{n}</span>
-                {isRestricted && (
-                  <span className="gb-bid-tooltip" aria-hidden="true">
-                    Total cannot equal tricks
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="gb-bid-foot">
-          {!canBid && (
-            <div className="gb-bid-equity">
-              <span className="gb-bid-wait">Waiting for your turn</span>
+        {viewerIsHuman ? (
+          <>
+            {!yourTurn && (
+              <div className="gb-bid-waiting gb-bid-preselect mono">
+                <span>{activeBidderName} is choosing a bid.</span>
+                <span>
+                  {queuedBid == null ? "Your bid is coming up." : `Queued bid: ${queuedBid}`}
+                </span>
+              </div>
+            )}
+            <div className="gb-bid-numbers">
+              {opts.map((n) => {
+                const isRestricted = yourTurn && restricted === n;
+                const isOn = v === n;
+                return (
+                  <button
+                    type="button"
+                    key={n}
+                    disabled={isRestricted || !canPrepareBid}
+                    title={isRestricted ? "Total bids can't equal total cards" : ""}
+                    aria-label={
+                      isRestricted
+                        ? `Bid ${n} unavailable; total bids cannot equal total cards`
+                        : `Bid ${n}`
+                    }
+                    aria-pressed={isOn}
+                    onClick={() => handlePickBid(n, isRestricted)}
+                    className={
+                      "gb-bid-num" + (isOn ? " on" : "") + (isRestricted ? " restricted" : "")
+                    }
+                  >
+                    <span>{n}</span>
+                    {isRestricted && (
+                      <span className="gb-bid-tooltip" aria-hidden="true">
+                        Total bids cannot equal total cards
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-          )}
-          <Button
-            type="button"
-            className="gb-bid-submit"
-            size="lg"
-            isDisabled={submitDisabled || !canBid}
-            title={submitDisabled ? "Total can't equal tricks" : ""}
-            onClick={() => {
-              if (!submitDisabled && canBid) {
-                if (onBid) onBid(v);
-                else localPlaceBid(0, v);
-              }
-            }}
-          >
-            Place bid
-          </Button>
-        </div>
+
+            <div className="gb-bid-foot">
+              <Button
+                type="button"
+                className="gb-bid-submit"
+                size="lg"
+                isDisabled={submitDisabled || !canPrepareBid}
+                isLoading={isSubmitting}
+                showTextWhileLoading
+                title={submitTitle}
+                onClick={handleSubmitBid}
+              >
+                Place bid
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="gb-bid-waiting mono">
+            <span>{activeBidderName} is choosing a bid.</span>
+            <span>Your bid is coming up.</span>
+          </div>
+        )}
       </motion.div>
     </div>
   );

@@ -11,9 +11,11 @@ import { cumulativeScores, type GameState } from "@/lib/game";
 export function RoundSummary({
   state: stateProp,
   onAdvance,
+  isAdvancing = false,
 }: {
   state?: GameState | null;
   onAdvance?: () => void;
+  isAdvancing?: boolean;
 }) {
   const localState = useMatch((s) => s.state);
   const localAdvance = useMatch((s) => s.advanceRound);
@@ -90,7 +92,15 @@ export function RoundSummary({
               <div style={{ width: `${Math.min(100, (state.round / state.maxRounds) * 100)}%` }} />
             </div>
           </div>
-          <Button size="md" onClick={() => advance()}>
+          <Button
+            size="md"
+            isDisabled={isAdvancing}
+            isLoading={isAdvancing}
+            showTextWhileLoading
+            onClick={() => {
+              if (!isAdvancing) advance();
+            }}
+          >
             {isFinalHand ? "See final" : "Deal next hand"} <Icon name="chevR" size={14} />
           </Button>
         </div>

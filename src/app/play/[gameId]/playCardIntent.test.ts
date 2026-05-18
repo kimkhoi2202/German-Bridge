@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Card } from "@/lib/cards";
 import type { GameState, Player } from "@/lib/game";
-import { canSendPlayCardIntent } from "./playCardIntent";
+import {
+  canKeepPreMoveIntent,
+  canQueuePreMoveIntent,
+  canSendPlayCardIntent,
+} from "./playCardIntent";
 
 const aceSpades: Card = { r: "A", s: "s", d: 0, key: "As-0" };
 const kingHearts: Card = { r: "K", s: "h", d: 0, key: "Kh-0" };
@@ -61,7 +65,7 @@ describe("canSendPlayCardIntent", () => {
     ).toBe(false);
   });
 
-  it("ignores out-of-turn card taps instead of creating a pre-move", () => {
+  it("ignores out-of-turn left taps", () => {
     expect(
       canSendPlayCardIntent({
         state: playingState({ turnIdx: 1 }),
@@ -101,5 +105,60 @@ describe("canSendPlayCardIntent", () => {
         isPlayInFlight: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("canQueuePreMoveIntent", () => {
+  it("does not queue a pre-move before the lead suit is known", () => {
+    expect(
+      canQueuePreMoveIntent({
+        state: playingState({ turnIdx: 1, currentTrick: [] }),
+        card: aceSpades,
+        isPlayInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("queues an out-of-turn legal follow-suit card after the first card is led", () => {
+    expect(
+      canQueuePreMoveIntent({
+        state: playingState({
+          turnIdx: 2,
+          currentTrick: [{ playerIdx: 1, card: kingHearts }],
+        }),
+        card: kingHearts,
+        isPlayInFlight: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects an illegal off-suit pre-move when the viewer can follow suit", () => {
+    expect(
+      canQueuePreMoveIntent({
+        state: playingState({
+          turnIdx: 2,
+          currentTrick: [{ playerIdx: 1, card: kingHearts }],
+        }),
+        card: aceSpades,
+        isPlayInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the selected pre-move through the handoff to the viewer turn", () => {
+    const state = playingState({
+      turnIdx: 0,
+      currentTrick: [{ playerIdx: 1, card: kingHearts }],
+    });
+
+    expect(canKeepPreMoveIntent({ state, cardKey: kingHearts.key })).toBe(true);
+    expect(
+      canSendPlayCardIntent({
+        state,
+        legalCardKeys: [kingHearts.key],
+        card: kingHearts,
+        isPlayInFlight: false,
+      }),
+    ).toBe(true);
   });
 });
