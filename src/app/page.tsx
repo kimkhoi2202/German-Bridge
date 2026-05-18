@@ -176,7 +176,7 @@ function LobbyContent() {
               <span className="eyebrow">Invite code</span>
               <span className="gb-profile-input-wrap">
                 <input
-                  className="gb-name-input mono"
+                  className="gb-name-input gb-invite-input mono"
                   aria-label="Invite code"
                   value={inviteCode}
                   onChange={(event) => setInviteCode(event.target.value.replace(/\D/g, ""))}
@@ -187,6 +187,11 @@ function LobbyContent() {
                   spellCheck={false}
                   autoComplete="off"
                 />
+                {!inviteCode && (
+                  <span className="gb-invite-placeholder mono" aria-hidden="true">
+                    ###
+                  </span>
+                )}
               </span>
             </label>
             <Button type="submit" size="md" isDisabled={busy || inviteCode.trim().length < 3}>
