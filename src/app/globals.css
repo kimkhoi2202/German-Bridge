@@ -2009,18 +2009,23 @@ input:focus-visible {
   flex-wrap: wrap;
 }
 
-.gb-history-list {
+.gb-history-modal > .gb-history-list {
+  flex: 1 1 auto;
   min-height: 0;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 24px 24px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gb-history-modal > .gb-history-list:not(.gb-history-rounds) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   align-content: start;
-  gap: 12px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 18px 24px 24px;
 }
 
-.gb-history-rounds {
+.gb-history-modal > .gb-history-rounds {
   display: flex;
   flex-direction: column;
 }
