@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { humanSeatPos, seatPos } from "./tableLayout";
 import { TableView } from "./Table";
@@ -158,6 +158,30 @@ describe("seatPos", () => {
     expect(container.querySelector(".gb-center-meta")).not.toBeInTheDocument();
   });
 
+  it("uses the custom abandon confirmation instead of the browser confirm", async () => {
+    const handleAbandon = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
+    render(<TableView state={tableState()} onAbandon={handleAbandon} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Quit" }));
+
+    expect(screen.getByRole("dialog", { name: "Abandon this match?" })).toBeInTheDocument();
+    expect(screen.getByText("Your current table will close and progress from this match will be lost.")).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Abandon this match?" })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quit match" }));
+
+    expect(handleAbandon).toHaveBeenCalledTimes(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
   it("offers pre-move on out-of-turn cards before the lead suit is known", () => {
     const handlePreMove = vi.fn();
     const { container } = render(
@@ -306,6 +330,8 @@ describe("seatPos", () => {
     expect(screen.queryByText("Played cards")).not.toBeInTheDocument();
     expect(screen.getByText("Hand 2/10")).toBeInTheDocument();
     expect(screen.getByText("1/6 cards")).toBeInTheDocument();
+    expect(screen.getByText("Hand 1")).toBeInTheDocument();
+    expect(screen.queryByText("Cards 1")).not.toBeInTheDocument();
     expect(screen.getByText("K♥")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Previous hand" }));

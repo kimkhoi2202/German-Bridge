@@ -11,7 +11,7 @@ import { cumulativeScores, tricksForRound, type GameState } from "@/lib/game";
 export function RoundSummary({
   state: stateProp,
   onAdvance,
-  canAdvance = true,
+  canAdvance = false,
   isAdvancing = false,
 }: {
   state?: GameState | null;

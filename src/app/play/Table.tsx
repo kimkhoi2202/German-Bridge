@@ -170,6 +170,7 @@ export function TableView({
   const state = stateProp ?? localState;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
   const [tableFanMaxWidth, setTableFanMaxWidth] = useState(780);
   const [flights, setFlights] = useState<CardFlight[]>([]);
   const [collectFlights, setCollectFlights] = useState<TrickCollectFlight[]>([]);
@@ -179,6 +180,8 @@ export function TableView({
   const shouldReduceMotion = prefersReducedMotion || !animationsEnabled;
   const historyTitleId = useId();
   const leaderboardTitleId = useId();
+  const abandonTitleId = useId();
+  const abandonBodyId = useId();
   const originRefs = useRef(new Map<number, HTMLElement>());
   const winnerRefs = useRef(new Map<number, HTMLElement>());
   const targetRefs = useRef(new Map<string, HTMLElement>());
@@ -236,6 +239,21 @@ export function TableView({
   const completeCollectFlight = useCallback((flightId: string) => {
     setCollectFlights((current) => current.filter((flight) => flight.id !== flightId));
   }, []);
+
+  const closeAbandonConfirm = useCallback(() => {
+    setAbandonConfirmOpen(false);
+  }, []);
+
+  const confirmAbandonMatch = useCallback(() => {
+    setAbandonConfirmOpen(false);
+    if (onAbandon) {
+      onAbandon();
+      return;
+    }
+
+    localAbandon();
+    router.push("/");
+  }, [localAbandon, onAbandon, router]);
 
   const currentTrickPlays = useMemo(
     () =>
@@ -557,13 +575,9 @@ export function TableView({
           type="button"
           className="gb-hud-btn danger"
           onClick={() => {
-            if (confirm("Abandon this match? Progress will be lost.")) {
-              if (onAbandon) onAbandon();
-              else {
-                localAbandon();
-                router.push("/");
-              }
-            }
+            setHistoryOpen(false);
+            setLeaderboardOpen(false);
+            setAbandonConfirmOpen(true);
           }}
         >
           Quit
@@ -838,6 +852,14 @@ export function TableView({
             onClose={() => setLeaderboardOpen(false)}
           />
         )}
+        {abandonConfirmOpen && (
+          <AbandonMatchModal
+            titleId={abandonTitleId}
+            bodyId={abandonBodyId}
+            onCancel={closeAbandonConfirm}
+            onConfirm={confirmAbandonMatch}
+          />
+        )}
       </AnimatePresence>
       <CardFlightLayer flights={flights} onComplete={completeFlight} />
       <TrickCollectLayer flights={collectFlights} onComplete={completeCollectFlight} />
@@ -1025,17 +1047,19 @@ function historyRoundsForState(state: GameState, currentPlayLog: PlayLogEntry[])
     state.phase !== "lobby" &&
     state.phase !== "match-end";
 
-  if (!shouldShowCurrentRound) return completedRounds;
+  const rounds = shouldShowCurrentRound
+    ? [
+        ...completedRounds,
+        {
+          round: state.round,
+          tricksTotal: state.tricksTotal,
+          trump: state.trumpCard,
+          playLog: currentPlayLog,
+        },
+      ]
+    : completedRounds;
 
-  return [
-    ...completedRounds,
-    {
-      round: state.round,
-      tricksTotal: state.tricksTotal,
-      trump: state.trumpCard,
-      playLog: currentPlayLog,
-    },
-  ];
+  return [...rounds].sort((a, b) => b.round - a.round);
 }
 
 function ModalCloseButton({
@@ -1085,6 +1109,68 @@ function HistoryNavButton({
     </button>
   );
 }
+
+const AbandonMatchModal = memo(function AbandonMatchModal({
+  titleId,
+  bodyId,
+  onCancel,
+  onConfirm,
+}: {
+  titleId: string;
+  bodyId: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+
+  return (
+    <motion.div
+      className="gb-history-overlay gb-abandon-overlay"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={exitTransition}
+      onClick={onCancel}
+    >
+      <motion.section
+        className="gb-history-modal gb-abandon-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={bodyId}
+        initial={{ opacity: 0, transform: "translateY(10px) scale(0.97)" }}
+        animate={{ opacity: 1, transform: "translateY(0) scale(1)" }}
+        exit={{ opacity: 0, transform: "translateY(8px) scale(0.985)" }}
+        transition={stateTransition}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="gb-abandon-mark" aria-hidden="true">
+          <Icon name="warning" size={22} />
+        </div>
+        <div className="gb-abandon-copy">
+          <div className="eyebrow">Quit match</div>
+          <h2 id={titleId}>Abandon this match?</h2>
+          <p id={bodyId}>Your current table will close and progress from this match will be lost.</p>
+        </div>
+        <div className="gb-abandon-actions">
+          <button type="button" className="gb-abandon-btn secondary" onClick={onCancel}>
+            Stay
+          </button>
+          <button type="button" className="gb-abandon-btn danger" onClick={onConfirm} autoFocus>
+            Quit match
+          </button>
+        </div>
+      </motion.section>
+    </motion.div>
+  );
+});
 
 const LeaderboardModal = memo(function LeaderboardModal({
   state,
@@ -1181,16 +1267,14 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
   onClose: () => void;
 }) {
   const rounds = useMemo(() => historyRoundsForState(state, playLog), [playLog, state]);
-  const [selectedRoundIndex, setSelectedRoundIndex] = useState(() =>
-    Math.max(0, rounds.length - 1),
-  );
+  const [selectedRoundIndex, setSelectedRoundIndex] = useState(0);
   const clampedRoundIndex = clamp(selectedRoundIndex, 0, Math.max(0, rounds.length - 1));
   const selectedRound = rounds[clampedRoundIndex] ?? null;
   const selectedPlayLog = useMemo(() => selectedRound?.playLog ?? [], [selectedRound]);
   const groups = useMemo(() => groupByTrick(selectedPlayLog), [selectedPlayLog]);
   const totalCards = (selectedRound?.tricksTotal ?? state.tricksTotal) * state.players.length;
-  const canGoPrevious = clampedRoundIndex > 0;
-  const canGoNext = clampedRoundIndex < rounds.length - 1;
+  const canGoPrevious = clampedRoundIndex < rounds.length - 1;
+  const canGoNext = clampedRoundIndex > 0;
 
   useEffect(() => {
     setSelectedRoundIndex((index) => clamp(index, 0, Math.max(0, rounds.length - 1)));
@@ -1224,15 +1308,15 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
               label="Previous hand"
               direction="previous"
               disabled={!canGoPrevious}
-              onClick={() => setSelectedRoundIndex((index) => Math.max(0, index - 1))}
+              onClick={() =>
+                setSelectedRoundIndex((index) => Math.min(rounds.length - 1, index + 1))
+              }
             />
             <HistoryNavButton
               label="Next hand"
               direction="next"
               disabled={!canGoNext}
-              onClick={() =>
-                setSelectedRoundIndex((index) => Math.min(rounds.length - 1, index + 1))
-              }
+              onClick={() => setSelectedRoundIndex((index) => Math.max(0, index - 1))}
             />
             <ModalCloseButton label="Close history" onClose={onClose} />
           </div>
@@ -1264,7 +1348,7 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
                 className={"gb-play-log-trick" + (winner ? " complete" : " current")}
               >
                 <div className="gb-play-log-trick-head">
-                  <span>Cards {trick}</span>
+                  <span>Hand {trick}</span>
                   <span>{winner ? state.players[winner.playerIdx]?.name : "In play"}</span>
                 </div>
 

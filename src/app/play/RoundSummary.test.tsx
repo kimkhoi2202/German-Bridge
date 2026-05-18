@@ -80,6 +80,19 @@ describe("RoundSummary", () => {
     expect(rows[3]).toHaveTextContent("→ 5");
   });
 
+  it("shows the advance button for the host", () => {
+    render(
+      <RoundSummary
+        state={roundEndState()}
+        canAdvance
+        onAdvance={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /see final/i })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("shows a host wait state instead of the advance button for non-host players", () => {
     render(
       <RoundSummary
@@ -88,6 +101,13 @@ describe("RoundSummary", () => {
         onAdvance={() => undefined}
       />,
     );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for the host");
+    expect(screen.queryByRole("button", { name: /see final/i })).not.toBeInTheDocument();
+  });
+
+  it("defaults to the waiting state when host permission is not provided", () => {
+    render(<RoundSummary state={roundEndState()} onAdvance={() => undefined} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Waiting for the host");
     expect(screen.queryByRole("button", { name: /see final/i })).not.toBeInTheDocument();

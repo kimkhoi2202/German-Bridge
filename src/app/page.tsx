@@ -179,10 +179,10 @@ function LobbyContent() {
                   aria-label="Invite code"
                   value={inviteCode}
                   onChange={(event) => setInviteCode(event.target.value.replace(/\D/g, ""))}
-                  maxLength={6}
+                  maxLength={3}
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  placeholder="123456"
+                  placeholder="123"
                   spellCheck={false}
                   autoComplete="off"
                 />

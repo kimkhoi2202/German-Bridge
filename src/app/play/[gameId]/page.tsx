@@ -43,9 +43,13 @@ function LiveGameContent() {
   const params = useParams<{ gameId: string }>();
   const gameId = params.gameId as Id<"games">;
   const router = useRouter();
-  const data = useQuery(api.games.watch, { gameId });
+  const joinStatus = useQuery(api.rooms.joinStatus, { gameId });
+  const shouldWatchRoom = joinStatus?.participantSeatIdx != null;
+  const data = useQuery(api.games.watch, shouldWatchRoom ? { gameId } : "skip");
+  const joinByGameId = useMutation(api.rooms.joinByGameId);
   const startRoom = useMutation(api.rooms.start);
   const claimSeat = useMutation(api.rooms.claimSeat);
+  const randomizeSeats = useMutation(api.rooms.randomizeSeats);
   const endRoom = useMutation(api.rooms.end);
   const placeBid = useMutation(api.games.placeBid);
   const playCard = useMutation(api.games.playCard);
@@ -58,6 +62,7 @@ function LiveGameContent() {
   const [error, setError] = useState<string | null>(null);
   const [pendingBid, setPendingBid] = useState(false);
   const [pendingAdvance, setPendingAdvance] = useState(false);
+  const [pendingRandomizeSeats, setPendingRandomizeSeats] = useState(false);
   const [pendingPlayCardKey, setPendingPlayCardKey] = useState<string | null>(null);
   const [preMoveCardKey, setPreMoveCardKey] = useState<string | null>(null);
   const pendingBidSequenceRef = useRef<number | null>(null);
@@ -65,9 +70,11 @@ function LiveGameContent() {
   const pendingPlayRef = useRef(false);
   const pendingPlaySequenceRef = useRef<number | null>(null);
   const autoTurnNudgeRef = useRef<string | null>(null);
+  const autoJoinRequestedRef = useRef(false);
   useGameViewportLock();
 
   useEffect(() => {
+    if (!data) return;
     void touchPresence({ gameId, status: "online" }).catch(() => {});
     const interval = window.setInterval(() => {
       void touchPresence({ gameId, status: "online" }).catch(() => {});
@@ -76,7 +83,19 @@ function LiveGameContent() {
       window.clearInterval(interval);
       void touchPresence({ gameId, status: "offline" }).catch(() => {});
     };
-  }, [gameId, touchPresence]);
+  }, [data, gameId, touchPresence]);
+
+  useEffect(() => {
+    if (!joinStatus || joinStatus.participantSeatIdx != null) return;
+    if (joinStatus.status !== "setup" || joinStatus.openSeatIdx == null) return;
+    if (autoJoinRequestedRef.current) return;
+    autoJoinRequestedRef.current = true;
+    setError(null);
+    void joinByGameId({ gameId }).catch((err) => {
+      autoJoinRequestedRef.current = false;
+      setError(err instanceof Error ? err.message : "Could not join room");
+    });
+  }, [gameId, joinByGameId, joinStatus]);
 
   useEffect(() => {
     if (data?.game.status === "setup" && data.game.defaultBotMood) {
@@ -262,6 +281,7 @@ function LiveGameContent() {
 
   async function handleAdvanceRound() {
     if (pendingAdvance || data?.state?.phase !== "round-end") return;
+    if (!data.viewerIsHost) return;
     pendingAdvanceSequenceRef.current = data.game.sequence;
     setPendingAdvance(true);
     setError(null);
@@ -273,6 +293,49 @@ function LiveGameContent() {
       setPendingAdvance(false);
       setError(err instanceof Error ? err.message : "Action failed");
     }
+  }
+
+  async function handleRandomizeSeats() {
+    if (pendingRandomizeSeats) return;
+    setPendingRandomizeSeats(true);
+    setError(null);
+    try {
+      await randomizeSeats({ gameId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setPendingRandomizeSeats(false);
+    }
+  }
+
+  if (!joinStatus) {
+    return (
+      <div className="gb-play-screen gb-route-fallback">
+        <div className="eyebrow">Loading room</div>
+      </div>
+    );
+  }
+
+  if (joinStatus.participantSeatIdx == null) {
+    const message =
+      error ??
+      (joinStatus.status !== "setup"
+        ? joinStatus.status === "active"
+          ? "Room has already started"
+          : "Room is no longer joinable"
+        : joinStatus.openSeatIdx == null
+          ? "Room is full"
+          : "Taking your seat");
+    return (
+      <div className="gb-play-screen gb-route-fallback">
+        <div className="eyebrow">{message}</div>
+        {(joinStatus.status !== "setup" || joinStatus.openSeatIdx == null || error) && (
+          <Button size="md" onClick={() => router.push("/")}>
+            Back to lobby
+          </Button>
+        )}
+      </div>
+    );
   }
 
   if (!data) {
@@ -312,7 +375,21 @@ function LiveGameContent() {
 
           <div className="gb-lobby-grid">
             <div className="gb-lobby-block gb-lobby-seating">
-              <div className="eyebrow">Seats</div>
+              <div className="gb-seat-heading">
+                <div className="eyebrow">Seats</div>
+                {data.viewerIsHost && (
+                  <Button
+                    color="tertiary"
+                    size="sm"
+                    type="button"
+                    onClick={handleRandomizeSeats}
+                    isLoading={pendingRandomizeSeats}
+                    showTextWhileLoading
+                  >
+                    Randomize
+                  </Button>
+                )}
+              </div>
               <div className="gb-seat-row">
                 {seats.map((seat, seatIdx) => (
                   <button

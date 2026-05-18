@@ -136,7 +136,7 @@ describe("Convex backend game jobs", () => {
       const setupView = await player.query(api.games.watch, { gameId: room.gameId });
       expect(setupView.state).toBeNull();
       expect(setupView.participants).toHaveLength(1);
-      expect(setupView.inviteCode).toMatch(/^[A-Z0-9]{6}$/);
+      expect(setupView.inviteCode).toMatch(/^\d{3}$/);
 
       await player.mutation(api.rooms.start, { gameId: room.gameId, botMood: "mixed" });
       const startedView = await player.query(api.games.watch, { gameId: room.gameId });
@@ -194,6 +194,117 @@ describe("Convex backend game jobs", () => {
     expect(view.game.defaultBotMood).toBe("champion");
     expect(view.participants).toHaveLength(4);
     expect(view.participants.slice(1).every((participant) => participant.personality === "champion")).toBe(true);
+  });
+
+  it("auto-joins shared setup room links into the next open seat", async () => {
+    const t = convexTest({ schema, modules }) as TestHarness;
+    const host = await authedClient(t, "qa_link_host");
+    const guest = await authedClient(t, "qa_link_guest");
+
+    const room = await host.mutation(api.rooms.create, {
+      playerCount: 3,
+      decks: 1,
+      tricksPerHand: 2,
+      botMood: "mixed",
+    });
+
+    await expect(guest.query(api.games.watch, { gameId: room.gameId })).rejects.toThrow(
+      "You are not in this game",
+    );
+
+    const beforeJoin = await guest.query(api.rooms.joinStatus, { gameId: room.gameId });
+    expect(beforeJoin.participantSeatIdx).toBeNull();
+    expect(beforeJoin.openSeatIdx).toBe(1);
+    expect(beforeJoin.status).toBe("setup");
+
+    const join = await guest.mutation(api.rooms.joinByGameId, { gameId: room.gameId });
+    expect(join.seatIdx).toBe(1);
+
+    const afterJoin = await guest.query(api.games.watch, { gameId: room.gameId });
+    expect(afterJoin.viewerSeatIdx).toBe(1);
+    expect(afterJoin.participants.map((participant) => participant.seatIdx)).toEqual([0, 1]);
+
+    const repeatJoin = await guest.mutation(api.rooms.joinByGameId, { gameId: room.gameId });
+    expect(repeatJoin.seatIdx).toBe(1);
+  });
+
+  it("keeps shared link auto-join out of full and already-started rooms", async () => {
+    const t = convexTest({ schema, modules }) as TestHarness;
+    const host = await authedClient(t, "qa_full_host");
+    const guestA = await authedClient(t, "qa_full_guest_a");
+    const guestB = await authedClient(t, "qa_full_guest_b");
+
+    const fullRoom = await host.mutation(api.rooms.create, {
+      playerCount: 3,
+      decks: 1,
+      tricksPerHand: 2,
+      botMood: "mixed",
+    });
+    await guestA.mutation(api.rooms.joinByGameId, { gameId: fullRoom.gameId });
+    await guestB.mutation(api.rooms.joinByGameId, { gameId: fullRoom.gameId });
+
+    const overflowGuest = await authedClient(t, "qa_full_overflow");
+    const fullStatus = await overflowGuest.query(api.rooms.joinStatus, { gameId: fullRoom.gameId });
+    expect(fullStatus.openSeatIdx).toBeNull();
+    await expect(
+      overflowGuest.mutation(api.rooms.joinByGameId, { gameId: fullRoom.gameId }),
+    ).rejects.toThrow("Room is full");
+
+    const startedRoom = await host.mutation(api.rooms.create, {
+      playerCount: 3,
+      decks: 1,
+      tricksPerHand: 1,
+      botMood: "mixed",
+    });
+    await host.mutation(api.rooms.start, { gameId: startedRoom.gameId, botMood: "mixed" });
+
+    const lateGuest = await authedClient(t, "qa_late_guest");
+    const lateStatus = await lateGuest.query(api.rooms.joinStatus, { gameId: startedRoom.gameId });
+    expect(lateStatus.status).toBe("active");
+    expect(lateStatus.openSeatIdx).toBeNull();
+    await expect(
+      lateGuest.mutation(api.rooms.joinByGameId, { gameId: startedRoom.gameId }),
+    ).rejects.toThrow("Room has already started");
+  });
+
+  it("lets the host randomize setup seats before starting", async () => {
+    const t = convexTest({ schema, modules }) as TestHarness;
+    const host = await authedClient(t, "qa_seat_host");
+    const guest = await authedClient(t, "qa_seat_guest");
+
+    const room = await host.mutation(api.rooms.create, {
+      playerCount: 4,
+      decks: 1,
+      tricksPerHand: 2,
+      botMood: "mixed",
+    });
+    await guest.mutation(api.rooms.joinByCode, { inviteCode: room.inviteCode });
+
+    const before = await host.query(api.games.watch, { gameId: room.gameId });
+    const beforeSeatsByName = new Map(
+      before.participants.map((participant) => [participant.name, participant.seatIdx]),
+    );
+
+    await expect(
+      guest.mutation(api.rooms.randomizeSeats, { gameId: room.gameId }),
+    ).rejects.toThrow("Only the room creator can randomize seats");
+
+    await host.mutation(api.rooms.randomizeSeats, { gameId: room.gameId });
+    const after = await host.query(api.games.watch, { gameId: room.gameId });
+    const afterSeatsByName = new Map(
+      after.participants.map((participant) => [participant.name, participant.seatIdx]),
+    );
+
+    expect(after.participants).toHaveLength(2);
+    expect(new Set(after.participants.map((participant) => participant.seatIdx)).size).toBe(2);
+    expect([...afterSeatsByName.keys()].sort()).toEqual([...beforeSeatsByName.keys()].sort());
+    expect(
+      [...afterSeatsByName].some(([name, seatIdx]) => beforeSeatsByName.get(name) !== seatIdx),
+    ).toBe(true);
+
+    await host.mutation(api.rooms.start, { gameId: room.gameId, botMood: "mixed" });
+    const started = await host.query(api.games.watch, { gameId: room.gameId });
+    expect(new Set(started.participants.map((participant) => participant.seatIdx)).size).toBe(4);
   });
 
   it("only lets the host advance after a round settles", async () => {
