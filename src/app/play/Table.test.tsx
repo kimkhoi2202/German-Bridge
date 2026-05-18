@@ -121,11 +121,11 @@ describe("seatPos", () => {
     const rightSeat = seatPos(9, 12);
 
     expect(leftSeat.zone).toBe("left");
-    expect(leftSeat.x).toBeGreaterThanOrEqual(3);
-    expect(leftSeat.x).toBeLessThanOrEqual(4);
+    expect(leftSeat.x).toBeGreaterThanOrEqual(1.8);
+    expect(leftSeat.x).toBeLessThanOrEqual(2.2);
     expect(rightSeat.zone).toBe("right");
-    expect(rightSeat.x).toBeGreaterThanOrEqual(96);
-    expect(rightSeat.x).toBeLessThanOrEqual(97);
+    expect(rightSeat.x).toBeGreaterThanOrEqual(97.8);
+    expect(rightSeat.x).toBeLessThanOrEqual(98.2);
   });
 
   it("shows the compact hand label and a separate current bid total pill", () => {

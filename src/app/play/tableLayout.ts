@@ -4,7 +4,7 @@ const SEAT_OVAL_CENTER_X = 50;
 const SEAT_OVAL_CENTER_Y = 50.6;
 const SEAT_OVAL_RADIUS_X = 43.8;
 const SEAT_OVAL_RADIUS_Y = 40.7;
-const SIDE_SEAT_EDGE_X = 3.4;
+const SIDE_SEAT_EDGE_X = 2;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));

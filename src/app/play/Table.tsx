@@ -1186,7 +1186,7 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
   );
   const clampedRoundIndex = clamp(selectedRoundIndex, 0, Math.max(0, rounds.length - 1));
   const selectedRound = rounds[clampedRoundIndex] ?? null;
-  const selectedPlayLog = selectedRound?.playLog ?? [];
+  const selectedPlayLog = useMemo(() => selectedRound?.playLog ?? [], [selectedRound]);
   const groups = useMemo(() => groupByTrick(selectedPlayLog), [selectedPlayLog]);
   const totalCards = (selectedRound?.tricksTotal ?? state.tricksTotal) * state.players.length;
   const canGoPrevious = clampedRoundIndex > 0;
