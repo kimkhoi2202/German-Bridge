@@ -158,9 +158,11 @@ describe("Convex backend game jobs", () => {
     expect(view.participants.slice(1).every((participant) => participant.personality === "champion")).toBe(true);
   });
 
-  it("accepts GPT bots and records legal fallback traces when no OpenAI key is configured", async () => {
+  it("keeps GPT bots honest instead of silently falling back when OpenAI is unavailable", async () => {
     vi.useFakeTimers();
     vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS", "1");
+    vi.stubEnv("OPENAI_GERMAN_BRIDGE_ALLOW_HEURISTIC_FALLBACK", "false");
     try {
       const t = convexTest({ schema, modules }) as TestHarness;
       const player = await authedClient(t, "qa_gpt_room");
@@ -172,19 +174,48 @@ describe("Convex backend game jobs", () => {
         botMood: "gpt",
       });
       await player.mutation(api.rooms.start, { gameId: room.gameId, botMood: "gpt" });
-      await driveToCompletion(t, player, room.gameId);
 
-      const debug = await player.query(api.games.aiDebug, { gameId: room.gameId });
-      expect(debug.locked).toBe(false);
-      expect(debug.summary.gptTraceCount).toBeGreaterThan(0);
-      const gptTrace = debug.traces.find((trace) => trace.personality === "gpt");
-      expect(gptTrace).toBeTruthy();
-      expect(gptTrace?.requestedPolicyId).toMatch(/^openai:/);
-      expect(gptTrace?.fallback).toBe(true);
-      expect(gptTrace?.fallbackReason).toBe("openai_api_key_missing");
-      expect(gptTrace?.chosenAction).toHaveProperty("label");
-      expect(gptTrace?.observation).toHaveProperty("ownHand");
-      expect(gptTrace?.observation).not.toHaveProperty("hands");
+      let blockedEvent:
+        | {
+            type: string;
+            payload: { reason?: string; gpt?: boolean; attempt?: number };
+          }
+        | undefined;
+      for (let step = 0; step < 20 && !blockedEvent; step += 1) {
+        await flushJobs(t);
+        const view = await player.query(api.games.watch, { gameId: room.gameId });
+        const events = await t.run(async (ctx) => {
+          return await ctx.db
+            .query("gameEvents")
+            .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+            .take(100);
+        });
+        blockedEvent = events.find((event) => event.type === "gpt_turn_blocked") as typeof blockedEvent;
+        if (blockedEvent) break;
+
+        if (view.state?.phase === "bidding" && view.legalBids.length > 0) {
+          await player.mutation(api.games.placeBid, { gameId: room.gameId, bid: view.legalBids[0] });
+        } else if (view.state?.phase === "playing" && view.legalCardKeys.length > 0) {
+          await player.mutation(api.games.playCard, { gameId: room.gameId, cardKey: view.legalCardKeys[0] });
+        } else if (view.state?.phase === "round-end") {
+          await player.mutation(api.games.advanceRound, { gameId: room.gameId });
+        }
+      }
+
+      expect(blockedEvent).toBeTruthy();
+      expect(blockedEvent?.payload).toMatchObject({
+        gpt: true,
+        attempt: 1,
+        reason: "openai_api_key_missing",
+      });
+
+      const traces = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("aiDecisionTraces")
+          .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+          .take(100);
+      });
+      expect(traces).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
       vi.useRealTimers();

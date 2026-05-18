@@ -22,6 +22,10 @@ import {
   type GptBridgeDecision,
 } from "../src/lib/ai/gptBridgeBot";
 import {
+  customLlmBridgeStrategyCard,
+  getLlmBridgeStrategyCard,
+} from "../src/lib/ai/llmStrategyCards";
+import {
   appendAiDecisionTrace,
   appendEvent,
   getGameOrThrow,
@@ -48,7 +52,9 @@ import {
 import { requireUserId } from "./lib/users";
 import { internal } from "./_generated/api";
 
-const DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS = 1800;
+const DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS = 512;
+const DEFAULT_GPT_BRIDGE_MAX_ATTEMPTS = 3;
+const DEFAULT_GPT_BRIDGE_RETRY_DELAY_MS = 1800;
 
 const gptDecisionValidator = v.union(
   v.object({
@@ -75,6 +81,12 @@ function envInteger(name: string, fallback: number) {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function envBoolean(name: string, fallback: boolean) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function shortFailureReason(reason: unknown) {
@@ -119,6 +131,7 @@ function withGptFallbackTrace(
   args: {
     model: string;
     reasoningEffort: string;
+    strategyId?: string;
     fallbackReason: string;
     requestId?: string;
     latencyMs?: number;
@@ -133,6 +146,7 @@ function withGptFallbackTrace(
       ...(trace.heuristic ?? {}),
       openAiModel: args.model,
       reasoningEffort: args.reasoningEffort,
+      strategyId: args.strategyId ?? null,
       requestId: args.requestId ?? null,
       latencyMs: args.latencyMs ?? null,
     },
@@ -215,7 +229,11 @@ async function scheduleNext(ctx: MutationCtx, gameId: Id<"games">, state: GameSt
   }
   if (isBotTurn(state)) {
     if (isGptBotTurn(state)) {
-      await ctx.scheduler.runAfter(850, internal.games.gptBotTurn, { gameId, expectedSequence: sequence });
+      await ctx.scheduler.runAfter(850, internal.games.gptBotTurn, {
+        gameId,
+        expectedSequence: sequence,
+        attempt: 1,
+      });
       return;
     }
     await ctx.scheduler.runAfter(850, internal.games.botTurn, { gameId, expectedSequence: sequence });
@@ -358,6 +376,28 @@ export const advanceRound = mutation({
   },
 });
 
+export const nudgeAutoTurn = mutation({
+  args: { gameId: v.id("games") },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const game = await getGameOrThrow(ctx, args.gameId);
+    await requireParticipant(ctx, game._id, userId);
+    if (game.status !== "active") return { scheduled: false, sequence: game.sequence };
+
+    const state = await getStateOrThrow(ctx, game._id);
+    const canAutoAdvance =
+      state.phase === "dealing" ||
+      state.phase === "trump" ||
+      state.phase === "trick-end" ||
+      isBotTurn(state);
+
+    if (!canAutoAdvance) return { scheduled: false, sequence: game.sequence };
+
+    await scheduleNext(ctx, game._id, state, game.sequence);
+    return { scheduled: true, sequence: game.sequence };
+  },
+});
+
 export const advancePhase = internalMutation({
   args: { gameId: v.id("games"), expectedSequence: v.number() },
   handler: async (ctx, args) => {
@@ -431,7 +471,9 @@ export const applyGptBotTurn = internalMutation({
     expectedSequence: v.number(),
     model: v.string(),
     reasoningEffort: v.string(),
+    strategyId: v.optional(v.string()),
     decision: gptDecisionValidator,
+    allowHeuristicFallback: v.optional(v.boolean()),
     requestId: v.optional(v.string()),
     latencyMs: v.optional(v.number()),
     fallbackReason: v.optional(v.string()),
@@ -455,6 +497,7 @@ export const applyGptBotTurn = internalMutation({
         const trace = gptBridgeDecisionToTrace(observation, decision, {
           model: args.model,
           reasoningEffort: args.reasoningEffort,
+          strategyId: args.strategyId,
           requestId: args.requestId,
           latencyMs: args.latencyMs,
         });
@@ -496,10 +539,16 @@ export const applyGptBotTurn = internalMutation({
         }
       } catch (error) {
         fallbackReason = `gpt_validation_failed:${shortFailureReason(error)}`;
+        if (!args.allowHeuristicFallback) {
+          throw new Error(fallbackReason);
+        }
       }
     }
 
     if (!nextState || !event || !aiTrace) {
+      if (!args.allowHeuristicFallback) {
+        throw new Error(fallbackReason ?? "gpt_decision_missing");
+      }
       const fallback = applyBotTurn(state);
       nextState = fallback.state;
       event = {
@@ -511,6 +560,7 @@ export const applyGptBotTurn = internalMutation({
         decision: withGptFallbackTrace(fallback.aiTrace.decision, {
           model: args.model,
           reasoningEffort: args.reasoningEffort,
+          strategyId: args.strategyId,
           fallbackReason: fallbackReason ?? "gpt_decision_missing",
           requestId: args.requestId,
           latencyMs: args.latencyMs,
@@ -531,12 +581,66 @@ export const applyGptBotTurn = internalMutation({
   },
 });
 
+export const recordGptBotTurnFailure = internalMutation({
+  args: {
+    gameId: v.id("games"),
+    expectedSequence: v.number(),
+    model: v.string(),
+    reasoningEffort: v.string(),
+    strategyId: v.optional(v.string()),
+    attempt: v.number(),
+    maxAttempts: v.number(),
+    retryDelayMs: v.number(),
+    failureReason: v.string(),
+    requestId: v.optional(v.string()),
+    latencyMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const game = await getGameOrThrow(ctx, args.gameId);
+    if (game.status !== "active" || game.sequence !== args.expectedSequence) return null;
+    const state = await getStateOrThrow(ctx, game._id);
+    if (!isGptBotTurn(state)) return null;
+
+    const seatIdx = state.phase === "bidding" ? state.bidTurn : state.turnIdx;
+    const shouldRetry = args.attempt < args.maxAttempts;
+    const sequence = await appendEvent(ctx, game, {
+      type: shouldRetry ? "gpt_turn_retry" : "gpt_turn_blocked",
+      seatIdx,
+      payload: {
+        gpt: true,
+        model: args.model,
+        reasoningEffort: args.reasoningEffort,
+        strategyId: args.strategyId ?? null,
+        attempt: args.attempt,
+        maxAttempts: args.maxAttempts,
+        reason: args.failureReason,
+        requestId: args.requestId ?? null,
+        latencyMs: args.latencyMs ?? null,
+      },
+    });
+
+    if (shouldRetry) {
+      await ctx.scheduler.runAfter(args.retryDelayMs, internal.games.gptBotTurn, {
+        gameId: game._id,
+        expectedSequence: sequence,
+        attempt: args.attempt + 1,
+      });
+    }
+
+    return { sequence, retry: shouldRetry };
+  },
+});
+
 export const gptBotTurn = internalAction({
-  args: { gameId: v.id("games"), expectedSequence: v.number() },
+  args: {
+    gameId: v.id("games"),
+    expectedSequence: v.number(),
+    attempt: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<ApplyGptBotTurnResult> => {
     const pending: PendingGptBotTurnResult = await ctx.runQuery(
       internal.games.pendingGptBotTurn,
-      args,
+      { gameId: args.gameId, expectedSequence: args.expectedSequence },
     );
     if (!pending) return null;
 
@@ -547,6 +651,13 @@ export const gptBotTurn = internalAction({
       "OPENAI_GERMAN_BRIDGE_MAX_OUTPUT_TOKENS",
       DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS,
     );
+    const maxAttempts = envInteger("OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS", DEFAULT_GPT_BRIDGE_MAX_ATTEMPTS);
+    const retryDelayMs = envInteger("OPENAI_GERMAN_BRIDGE_RETRY_DELAY_MS", DEFAULT_GPT_BRIDGE_RETRY_DELAY_MS);
+    const allowHeuristicFallback = envBoolean("OPENAI_GERMAN_BRIDGE_ALLOW_HEURISTIC_FALLBACK", false);
+    const customStrategy = process.env.OPENAI_GERMAN_BRIDGE_STRATEGY_CARD;
+    const strategy = customStrategy?.trim()
+      ? customLlmBridgeStrategyCard(customStrategy)
+      : getLlmBridgeStrategyCard(process.env.OPENAI_GERMAN_BRIDGE_STRATEGY_ID);
     const apiKey = process.env.OPENAI_API_KEY;
     const seatIdx =
       pending.state.phase === "bidding" ? pending.state.bidTurn : pending.state.turnIdx;
@@ -569,9 +680,9 @@ export const gptBotTurn = internalAction({
         headers,
         body: JSON.stringify({
           model,
-          input: buildGptBridgeInput(observation),
+          input: buildGptBridgeInput(observation, { strategy }),
           reasoning: { effort: reasoningEffort },
-          text: { format: buildGptBridgeTextFormat(observation) },
+          text: { format: buildGptBridgeTextFormat(observation), verbosity: "low" },
           max_output_tokens: maxOutputTokens,
           store: false,
         }),
@@ -591,23 +702,46 @@ export const gptBotTurn = internalAction({
       const parsed = parseGptBridgeDecision(outputText);
       const decision = validateGptBridgeDecision(observation, parsed);
       const result: ApplyGptBotTurnResult = await ctx.runMutation(internal.games.applyGptBotTurn, {
-        ...args,
+        gameId: args.gameId,
+        expectedSequence: args.expectedSequence,
         model,
         reasoningEffort,
+        strategyId: strategy.id,
         decision,
+        allowHeuristicFallback: false,
         requestId,
         latencyMs: Date.now() - startedAt,
       });
       return result;
     } catch (error) {
+      const failureReason = shortFailureReason(error);
+      if (!allowHeuristicFallback) {
+        await ctx.runMutation(internal.games.recordGptBotTurnFailure, {
+          gameId: args.gameId,
+          expectedSequence: args.expectedSequence,
+          model,
+          reasoningEffort,
+          strategyId: strategy.id,
+          attempt: args.attempt ?? 1,
+          maxAttempts,
+          retryDelayMs,
+          failureReason,
+          requestId,
+          latencyMs: Date.now() - startedAt,
+        });
+        return null;
+      }
       const result: ApplyGptBotTurnResult = await ctx.runMutation(internal.games.applyGptBotTurn, {
-        ...args,
+        gameId: args.gameId,
+        expectedSequence: args.expectedSequence,
         model,
         reasoningEffort,
+        strategyId: strategy.id,
         decision: null,
+        allowHeuristicFallback: true,
         requestId,
         latencyMs: Date.now() - startedAt,
-        fallbackReason: shortFailureReason(error),
+        fallbackReason: failureReason,
       });
       return result;
     }
