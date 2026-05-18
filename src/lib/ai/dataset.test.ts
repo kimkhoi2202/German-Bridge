@@ -38,7 +38,9 @@ describe("training dataset generation", () => {
     expect(first.examples[0].observation.tricksTotal).toBe(1);
     expect(first.examples[0].observation.remainingHandCounts).toEqual([1, 1, 1, 1]);
     expect(first.examples[0].observation.legalBids).toEqual([0, 1]);
-    expect(first.examples[0].observation.leadIdx).toBe(first.examples[0].playerIdx);
+    expect(first.examples[0].observation.leadIdx).toBe(
+      (first.examples[0].playerIdx + 1) % first.examples[0].observation.playerCount,
+    );
     expect(first.examples[0].observation.opponentProfiles).toHaveLength(4);
   });
 

@@ -52,7 +52,7 @@ const DEFAULTS: Settings = {
   showTrumpHints: true,
   animations: true,
   defaultPlayers: 4,
-  defaultDecks: 1,
+  defaultDecks: 2,
   defaultTricksPerHand: 10,
   defaultBotMood: "mixed",
   playerName: "You",

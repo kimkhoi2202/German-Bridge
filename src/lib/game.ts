@@ -164,6 +164,7 @@ export function startRound(
   const trumpCard = shoe.pop();
   if (!trumpCard) throw new Error("No card available for trump flip");
 
+  const firstPlayerIdx = dealerIdx;
   const lead = (dealerIdx + 1) % players.length;
 
   return {
@@ -175,7 +176,7 @@ export function startRound(
     trumpCard,
     tricksTotal: tricksThisHand,
     bids: Array(players.length).fill(null),
-    bidTurn: lead,
+    bidTurn: firstPlayerIdx,
     won: Array(players.length).fill(0),
     trickIdx: 0,
     currentTrick: [],

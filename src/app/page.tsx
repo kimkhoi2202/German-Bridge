@@ -35,7 +35,7 @@ function LobbyContent() {
   useGameViewportLock();
 
   const [playerCount, setPlayerCount] = useState(4);
-  const [decks, setDecks] = useState(1);
+  const [decks, setDecks] = useState(2);
   const [tricks, setTricks] = useState(10);
   const [botMood, setBotMood] = useState<Personality>("mixed");
   const [inviteCode, setInviteCode] = useState("");

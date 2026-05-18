@@ -82,11 +82,11 @@ describe("startRound", () => {
     expect(s1.round).toBe(1);
   });
 
-  it("randomizes the initial dealer and derives the first bidder from that dealer", () => {
+  it("randomizes the initial dealer, starts bidding with dealer, then starts play after dealer", () => {
     const s0 = initialState(baseConfig);
     const s1 = startRound(s0, rngWithFirst(0.75));
     expect(s1.dealerIdx).toBe(3);
-    expect(s1.bidTurn).toBe(0);
+    expect(s1.bidTurn).toBe(3);
     expect(s1.leadIdx).toBe(0);
     expect(s1.turnIdx).toBe(0);
   });
@@ -95,11 +95,13 @@ describe("startRound", () => {
     const s0 = initialState(baseConfig);
     const firstRound = startRound(s0, rngWithFirst(0.25));
     expect(firstRound.dealerIdx).toBe(1);
-    expect(firstRound.bidTurn).toBe(2);
+    expect(firstRound.bidTurn).toBe(1);
+    expect(firstRound.leadIdx).toBe(2);
 
     const secondRound = nextRound({ ...firstRound, phase: "round-end" }, seededRng(9));
     expect(secondRound.dealerIdx).toBe(2);
-    expect(secondRound.bidTurn).toBe(3);
+    expect(secondRound.bidTurn).toBe(2);
+    expect(secondRound.leadIdx).toBe(3);
   });
 
   it("throws if tricksPerHand exceeds the deck capacity", () => {
@@ -113,7 +115,7 @@ describe("placeBid", () => {
     const s0 = initialState(baseConfig);
     let s = startRound(s0, seededRng(2));
     s = { ...s, phase: "bidding" };
-    // Bid in turn order; lead is dealer+1
+    // Bid in turn order, starting with the dealer.
     const order = [s.bidTurn];
     for (let i = 1; i < 4; i++) order.push((order[i - 1] + 1) % 4);
 
@@ -138,6 +140,8 @@ describe("placeBid", () => {
     s = placeBid(s, order[2], 0);
     s = placeBid(s, order[3], 0);
     expect(s.phase).toBe("playing");
+    expect(s.turnIdx).toBe((s.dealerIdx + 1) % s.players.length);
+    expect(s.leadIdx).toBe((s.dealerIdx + 1) % s.players.length);
   });
 
   it("rejects bids out of range", () => {

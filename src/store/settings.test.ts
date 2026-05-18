@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { sanitizeSettings } from "./settings";
 
 describe("settings hardening", () => {
+  it("uses two decks as the default lobby setup", () => {
+    expect(sanitizeSettings(undefined).defaultDecks).toBe(2);
+  });
+
   it("migrates old themes and clamps persisted defaults", () => {
     const sanitized = sanitizeSettings({
       theme: "studio" as never,
