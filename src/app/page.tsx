@@ -182,7 +182,7 @@ function LobbyContent() {
                   maxLength={3}
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  placeholder="123"
+                  placeholder="###"
                   spellCheck={false}
                   autoComplete="off"
                 />
