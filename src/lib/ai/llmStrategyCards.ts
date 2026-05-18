@@ -7,9 +7,58 @@ export interface LlmBridgeStrategyCard {
   riskControls: readonly string[];
 }
 
-export const DEFAULT_LLM_BRIDGE_STRATEGY_ID = "pressure-exact-v2";
+export const DEFAULT_LLM_BRIDGE_STRATEGY_ID = "adaptive-table-reader-v2";
 
 export const LLM_BRIDGE_STRATEGY_CARDS: readonly LlmBridgeStrategyCard[] = [
+  {
+    id: "adaptive-table-reader-v2",
+    title: "Adaptive Table Reader V2",
+    intent:
+      "Win exact bids with calibrated bidding, varied table pressure, and late-hand trump control instead of predictable trump burning.",
+    biddingLens: [
+      "Do not bid from trump count alone. In 5+ player or 2-deck games, low and middle trump are fragile because stronger trump can still appear later.",
+      "Discount a trump-heavy hand unless it also has timing: lead access, side-suit length, protected high cards, or a clear endgame control plan.",
+      "Bid 2+ only with multiple independent paths to wins. One high trump plus shaky side cards is often a 1, not an automatic 2.",
+      "Read table bids as noisy evidence: high bids claim strength but may overstate it; low bids may be dodge plans; prior overbid history makes claims less credible.",
+      "When table bids are already high, cut speculative bids first. When table bids are low, raise only for unavoidable accidental winners, not for every playable card.",
+    ],
+    playLens: [
+      "Vary your plan. Use the tactical mode as a tie-breaker so your leads are not always trump, always low, or always strongest-card first.",
+      "Save high trump for endgame control unless spending one now blocks a dangerous exact score or protects your own bid.",
+      "Small trump pressure is a tool, not a habit: use it only to drain a named target, expose trump holdings, or force a player off their exact line.",
+      "If you have weak trump, expect it can lose to a later trump. Do not rely on it as a guaranteed winner when bidding or when choosing an early fight.",
+      "Sometimes burn middle off-suit cards or build a void before touching trump, especially when losing predictably is more valuable than winning now.",
+      "Track who is at target, below target, over target, and void. Do not feed safe burns to at-target players or easy winners to players below target.",
+    ],
+    riskControls: [
+      "Never play your strongest trump just because it is strongest. Ask what future control you lose by spending it.",
+      "Avoid repeated trump-lead patterns across the same hand unless the table state clearly rewards it.",
+      "If your bid is already made, prioritize dodging extra tricks over sabotaging others.",
+      "When uncertain, keep at least one future winner and one future loser if legal cards allow it.",
+    ],
+  },
+  {
+    id: "adaptive-table-reader-v1",
+    title: "Adaptive Table Reader",
+    intent:
+      "Make exact bids by reading bids as noisy table signals, varying trump timing, and preserving late-hand control.",
+    biddingLens: [
+      "Treat every opponent bid as evidence, not truth: high bids usually claim trump/control, low bids usually claim a dodge plan, and prior over/under history changes credibility.",
+      "Estimate forced wins, safe losers, accidental winners, and follow-suit traps before choosing a bid.",
+      "Use table total pressure: when total bids are already high, discount speculative winners; when total bids are low, protect against unavoidable accidental wins.",
+    ],
+    playLens: [
+      "Re-read bid gaps every card: players below target want wins, players at target fear extra tricks, and players above target want to dump danger.",
+      "Do not lead trump by habit. Lead small trump only to drain a specific target, break a trump-based bid, or protect your exact plan.",
+      "Save high trump and clear winners for late control unless spending them now prevents a larger score swing.",
+      "Burn middle cards when losing is predictable, create/notice voids, and avoid feeding a safe burn to a player who is already on track.",
+    ],
+    riskControls: [
+      "Avoid repetitive trump-bully lines; if you led trump recently or have no named target, choose a suit/control plan instead.",
+      "Do not sabotage another player if it makes your own bid harder to hit.",
+      "When uncertain, prefer the card that keeps both a future winner and a future loser available.",
+    ],
+  },
   {
     id: "pressure-exact-v2",
     title: "Pressure Exact Controller",

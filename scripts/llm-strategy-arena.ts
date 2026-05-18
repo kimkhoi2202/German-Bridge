@@ -152,7 +152,7 @@ async function main() {
     maxOutputTokens: numberArg(
       args,
       "max-output-tokens",
-      Number(process.env.OPENAI_GERMAN_BRIDGE_MAX_OUTPUT_TOKENS ?? 512),
+      Number(process.env.OPENAI_GERMAN_BRIDGE_MAX_OUTPUT_TOKENS ?? 1024),
     ),
     maxAttempts: numberArg(args, "max-attempts", Number(process.env.OPENAI_GERMAN_BRIDGE_MAX_ATTEMPTS ?? 2)),
     requestTimeoutMs: numberArg(

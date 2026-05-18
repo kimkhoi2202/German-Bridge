@@ -72,21 +72,29 @@ describe("gptBridgeBot compact protocol", () => {
     expect(buildGptBridgeTextFormat(observation())).toEqual({ type: "text" });
     const input = buildGptBridgeInput(observation());
     expect(input[0]?.content).toContain("No prose, no JSON");
-    expect(input[1]?.content).toContain("Return exactly one line: B:<legalBid>");
+    expect(input[1]?.content).toContain("Final answer format: exactly B:<legalBid>");
     expect(input[1]?.content).toContain("shape=tr");
     expect(input[1]?.content).toContain("mid6-T");
     expect(input[1]?.content).toContain("bidctx=");
     expect(input[1]?.content).toContain("needs:");
+    expect(input[1]?.content).toContain("tablesignals:");
+    expect(input[1]?.content).toContain("trumplens=");
+    expect(input[1]?.content).toContain("tacticalmode=");
+    expect(input[1]?.content).toContain("claimsStrong");
     expect(input[1]?.content).toContain("Strategy lens, not hard rules");
-    expect(input[1]?.content).toContain("pressure-exact-v2");
+    expect(input[1]?.content).toContain("adaptive-table-reader-v2");
     expect(input[1]?.content).not.toContain("reasoning_summary");
   });
 
   it("injects compact reasoning context for fast GPT decisions", () => {
     const bidInput = buildGptBridgeInput(observation());
     expect(bidInput[1]?.content).toContain("Private bidding process");
+    expect(bidInput[1]?.content).toContain("noisy tells");
     expect(bidInput[1]?.content).toContain("middle cards");
     expect(bidInput[1]?.content).toContain("table bid pressure");
+    expect(bidInput[1]?.content).toContain("Do not bid from trump count alone");
+    expect(bidInput[1]?.content).toContain("unavoidable accidental winners");
+    expect(bidInput[1]?.content).toContain("cut speculative bids");
 
     const playInput = buildGptBridgeInput(
       observation({
@@ -106,6 +114,9 @@ describe("gptBridgeBot compact protocol", () => {
     expect(playInput[1]?.content).toContain("cardlens=");
     expect(playInput[1]?.content).toContain("nowWin");
     expect(playInput[1]?.content).toContain("opponent needs");
+    expect(playInput[1]?.content).toContain("Never lead trump by habit");
+    expect(playInput[1]?.content).toContain("never auto-play strongest trump");
+    expect(playInput[1]?.content).toContain("preserve trump for endgame control");
   });
 
   it("can inject the forced-winner table-police strategy mutation", () => {
@@ -121,6 +132,7 @@ describe("gptBridgeBot compact protocol", () => {
     expect(parseGptBridgeDecision("B:2")).toMatchObject({ kind: "bid", bid: 2 });
     expect(parseGptBridgeDecision("Bid 1")).toMatchObject({ kind: "bid", bid: 1 });
     expect(parseGptBridgeDecision("I choose BID: 0")).toMatchObject({ kind: "bid", bid: 0 });
+    expect(parseGptBridgeDecision("After private reasoning:\nB:1")).toMatchObject({ kind: "bid", bid: 1 });
     expect(parseGptBridgeDecision("C:As-0-a")).toMatchObject({
       kind: "card",
       cardKey: "As-0-a",
@@ -134,6 +146,10 @@ describe("gptBridgeBot compact protocol", () => {
       cardKey: "As-0-a",
     });
     expect(parseGptBridgeDecision("C:ASd1:As-0-a")).toMatchObject({
+      kind: "card",
+      cardKey: "As-0-a",
+    });
+    expect(parseGptBridgeDecision("My final move is:\nC:As-0-a")).toMatchObject({
       kind: "card",
       cardKey: "As-0-a",
     });

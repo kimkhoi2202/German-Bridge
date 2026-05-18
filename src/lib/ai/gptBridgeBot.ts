@@ -13,7 +13,7 @@ import {
 } from "./llmStrategyCards";
 
 export const DEFAULT_GPT_BRIDGE_MODEL = "gpt-5.5";
-export const DEFAULT_GPT_BRIDGE_REASONING_EFFORT = "low";
+export const DEFAULT_GPT_BRIDGE_REASONING_EFFORT = "none";
 export const GPT_BRIDGE_POLICY_ID = "openai:german-bridge-gpt";
 
 export type GptBridgeDecision =
@@ -110,12 +110,114 @@ function compactHandShape(observation: BotObservation) {
   return `shape=tr${trumpCount}/${observation.ownHand.length} ${suitCounts} hiJ+${highCount} mid6-T${middleCount} low2-5${lowCount} selfVoid${voidSuits}`;
 }
 
+function compactTrumpLens(observation: BotObservation) {
+  if (!observation.trumpSuit) return "trumplens=none";
+  const trumps = observation.ownHand.filter((card) => card.s === observation.trumpSuit);
+  const highTrump = trumps.filter((card) => rankVal(card.r) >= rankVal("J")).length;
+  const midTrump = trumps.filter((card) => {
+    const value = rankVal(card.r);
+    return value >= rankVal("6") && value <= rankVal("T");
+  }).length;
+  const lowTrump = trumps.filter((card) => rankVal(card.r) <= rankVal("5")).length;
+  const crowded = observation.playerCount >= 5 || observation.decks >= 2;
+  const reliability =
+    !trumps.length
+      ? "none"
+      : crowded && lowTrump + midTrump >= highTrump
+        ? "fragile"
+        : highTrump > 0
+          ? "control"
+          : "pressureOnly";
+  return `trumplens=count${trumps.length}/hi${highTrump}/mid${midTrump}/low${lowTrump}/crowd${
+    crowded ? "Y" : "N"
+  }/${reliability}`;
+}
+
 function compactNeeds(observation: BotObservation) {
   return observation.bids
     .map((bid, playerIdx) => {
       const won = observation.won[playerIdx] ?? 0;
       const need = bid == null ? "?" : bid - won;
       return `p${playerIdx}:b${bid ?? "?"}/w${won}/n${need}`;
+    })
+    .join(" ");
+}
+
+function compactTacticalMode(observation: BotObservation) {
+  const playTick =
+    observation.playLog.length +
+    observation.currentTrick.length +
+    observation.ownHand.length +
+    observation.playerIdx +
+    observation.won.reduce((sum, value) => sum + value, 0);
+  const biddingModes = [
+    "calibrate-low:discount speculative trump and avoid crowd overbid",
+    "forced-winner:bid only unavoidable winners, not vague strength",
+    "table-total:use total bids and last-bid block pressure",
+    "human-counter:read human exact-bid plan as noisy but serious",
+  ];
+  const playModes = [
+    "save-trump:preserve high trump/endgame control",
+    "suit-control:burn middle/off-suit and build or exploit voids",
+    "target-pressure:pressure a named player off exact bid",
+    "false-tempo:vary lead, avoid obvious strongest-card/trump line",
+    "danger-dump:when over target, shed cards likely to win later",
+  ];
+  const modes = observation.phase === "bidding" ? biddingModes : playModes;
+  return `tacticalmode=${modes[playTick % modes.length]}`;
+}
+
+function bidSignal(bid: number | null, tricksTotal: number) {
+  if (bid == null) return "unbid";
+  if (bid === 0) return "claimsDodge0";
+  const ratio = tricksTotal > 0 ? bid / tricksTotal : 0;
+  if (bid >= 3 || ratio >= 0.45) return "claimsStrong";
+  if (bid >= 2 || ratio >= 0.25) return "claimsControl";
+  return "claimsSmall";
+}
+
+function historySignal(profile: BotObservation["opponentProfiles"][number]) {
+  if (!profile.priorRounds) return "histNew";
+  if (
+    profile.priorOverBidCount > profile.priorUnderBidCount &&
+    profile.priorOverBidCount >= profile.priorMadeBidCount
+  ) {
+    return "histOver";
+  }
+  if (
+    profile.priorUnderBidCount > profile.priorOverBidCount &&
+    profile.priorUnderBidCount >= profile.priorMadeBidCount
+  ) {
+    return "histUnder";
+  }
+  if (profile.priorMadeBidCount >= profile.priorOverBidCount + profile.priorUnderBidCount) {
+    return "histExact";
+  }
+  return "histMixed";
+}
+
+function needSignal(bid: number | null, won: number, remaining: number) {
+  if (bid == null) return "noBidYet";
+  const need = bid - won;
+  if (need < 0) return `over${Math.abs(need)}`;
+  if (need === 0) return "atTarget";
+  if (need >= remaining) return `mustWin${need}`;
+  return `needs${need}`;
+}
+
+function compactTableSignals(observation: BotObservation) {
+  return observation.opponentProfiles
+    .map((profile) => {
+      const player = observation.players[profile.playerIdx];
+      const bid = profile.currentBid;
+      const won = profile.currentWon;
+      const remaining = observation.remainingHandCounts[profile.playerIdx] ?? 0;
+      const human = player?.isHuman ? "human" : "bot";
+      return `p${profile.playerIdx}:${human}/${bidSignal(bid, observation.tricksTotal)}/${needSignal(
+        bid,
+        won,
+        remaining,
+      )}/${historySignal(profile)}`;
     })
     .join(" ");
 }
@@ -166,13 +268,20 @@ function expertDoctrine(observation: BotObservation) {
   if (observation.phase === "bidding") {
     return [
       "Private bidding process: make an independent expected-score estimate, not a fixed rule. Balance likely winners, unavoidable accidental winners, safe losers, suit length, trump control, lead position, and table bid pressure.",
+      "Read other bids as noisy tells: high bids usually claim trump/control, low bids usually claim a dodge plan, and prior over/under history changes credibility. They can still be wrong.",
+      "Use trumplens: in crowded tables, low and middle trump are fragile. Do not convert trump count into bids unless the trump can actually survive timing and stronger trump.",
+      "Use tacticalmode as a tie-breaker to avoid repetitive strategy while still maximizing expected score.",
       "Treat middle cards as uncertain: they are less reliable than clear winners or clear losers. High off-suit cards can become forced accidental wins when suit length is short.",
-      "Use bidctx to avoid optimism: when table bids are already above tricks, adding a marginal bid usually helps opponents; when table bids are low, account for accidental wins.",
+      "Use bidctx to avoid optimism: when table bids are already above tricks, adding a marginal bid usually helps opponents; when table bids are low, account for unavoidable accidental wins, not every possible win.",
     ].join(" ");
   }
 
   return [
     "Private play process: compare legal cards by expected final score. First protect your own exact bid, then use opponent needs, voids, and current trick pressure to break their exact bids.",
+    "Use table signals in real time: players below target need wins, at-target players fear extra tricks, and over-target players want to dump danger.",
+    "Use tacticalmode as a tie-breaker so your play is not predictable.",
+    "Never lead trump by habit and never auto-play strongest trump. Lead or burn trump only with a named purpose: drain a likely trump bidder, bully a specific target, protect your bid, or prevent a bigger exact score. Otherwise preserve trump for endgame control.",
+    "Weak trump can lose to stronger trump later. If a low trump is your only path, treat it as pressure or sacrifice unless the table proves it will hold.",
     "Use cardlens and needs: decide whether each card is likely to win now, lose now, preserve control, create a void, burn danger, or force an opponent into an unwanted trick.",
     "Do not blindly dump or blindly win. Re-evaluate every turn from the live table: current trick, played cards, void profiles, remaining cards, and each player's need.",
   ].join(" ");
@@ -201,6 +310,18 @@ function cleanSummary(value: unknown) {
   return typeof value === "string"
     ? value.replace(/\s+/g, " ").trim().slice(0, 320)
     : "";
+}
+
+function compactActionCandidates(text: string) {
+  const stripped = text
+    .replace(/```[a-z]*\s*/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  const lines = stripped
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^`+|`+$/g, "").trim())
+    .filter(Boolean);
+  return [...lines.reverse(), stripped];
 }
 
 function gptActionTrace(action: BotDecisionAction, chosenAction: BotDecisionAction, score: number): BotActionTrace {
@@ -245,6 +366,9 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     `won=${observation.won.join(",")}`,
     `mine=b${bid ?? "?"}/w${won}/need${bid == null ? "?" : bid - won}`,
     `needs:${compactNeeds(observation)}`,
+    `tablesignals:${compactTableSignals(observation)}`,
+    compactTrumpLens(observation),
+    compactTacticalMode(observation),
     `remaining=${observation.remainingHandCounts.join(",")}`,
     `players:${players}`,
     compactHandShape(observation),
@@ -259,12 +383,12 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     observation.phase === "bidding"
       ? [
           `Legal bids: ${observation.legalBids.join(",")}`,
-          "Return exactly one line: B:<legalBid>",
+          "Final answer format: exactly B:<legalBid>, nothing else.",
           "Choose the bid with best expected score after private reasoning. Do not overcorrect toward high bids or low bids.",
         ].join("\n")
       : [
           `Legal cards: ${compactCards(observation.legalCards)}`,
-          "Return exactly one line: C:<legalCardKey>",
+          "Final answer format: exactly C:<legalCardKey>, nothing else.",
           "Use the card key before parentheses in the legal-cards list. Follow suit and choose the best expected-score card.",
         ].join("\n");
 
@@ -272,7 +396,7 @@ export function buildGptBridgeInput(observation: BotObservation, options: GptBri
     {
       role: "system",
       content:
-        "You are a strong German Bridge bot. Use only public state and your own hand. Think privately, but output one compact action line only: B:<bid> for bidding or C:<cardKey> for play. No prose, no JSON, no markdown.",
+        "You are a strong German Bridge bot. Use only public state and your own hand. Think privately, but your entire final answer must be exactly one compact action line: B:<bid> for bidding or C:<cardKey> for play. Any extra text makes the move invalid. No prose, no JSON, no markdown.",
     },
     {
       role: "user",
@@ -301,33 +425,36 @@ export function parseGptBridgeDecision(text: string): ParsedDecision {
     return parsed;
   }
 
-  const firstLine = (trimmed.split(/\r?\n/, 1)[0] ?? "").replace(/^`+|`+$/g, "").trim();
-  const bidMatch =
-    firstLine.match(/^(?:B|BID)\s*[:=\-]?\s*(\d+)\s*$/i) ??
-    firstLine.match(/\b(?:B|BID)\s*[:=\-]\s*(\d+)\b/i) ??
-    firstLine.match(/^(\d+)\s*$/);
-  if (bidMatch) {
-    return {
-      kind: "bid",
-      bid: Number.parseInt(bidMatch[1]!, 10),
-      confidence: 0.7,
-      reasoning_summary: "",
-    };
+  for (const candidate of compactActionCandidates(trimmed)) {
+    const bidMatch =
+      candidate.match(/^(?:B|BID)\s*[:=\-]?\s*(\d+)\s*$/i) ??
+      candidate.match(/\b(?:B|BID)\s*[:=\-]\s*(\d+)\b/i) ??
+      candidate.match(/^(\d+)\s*$/);
+    if (bidMatch) {
+      return {
+        kind: "bid",
+        bid: Number.parseInt(bidMatch[1]!, 10),
+        confidence: 0.7,
+        reasoning_summary: "",
+      };
+    }
   }
 
-  const cardMatch =
-    firstLine.match(/^(?:C|CARD)\s*[:=\-]?\s*(\S+)\s*$/i) ??
-    firstLine.match(/\b(?:C|CARD)\s*[:=\-]\s*(\S+)/i);
-  if (cardMatch) {
-    const rawCard = cardMatch[1]!.replace(/[`,.;]+$/g, "");
-    const maybeKey = rawCard.includes(":") ? rawCard.slice(rawCard.lastIndexOf(":") + 1) : rawCard;
-    const keyMatch = maybeKey.match(/^([A-Za-z0-9_-]+)/);
-    return {
-      kind: "card",
-      cardKey: keyMatch?.[1] ?? maybeKey,
-      confidence: 0.7,
-      reasoning_summary: "",
-    };
+  for (const candidate of compactActionCandidates(trimmed)) {
+    const cardMatch =
+      candidate.match(/^(?:C|CARD)\s*[:=\-]?\s*(\S+)\s*$/i) ??
+      candidate.match(/\b(?:C|CARD)\s*[:=\-]\s*(\S+)/i);
+    if (cardMatch) {
+      const rawCard = cardMatch[1]!.replace(/[`,.;]+$/g, "");
+      const maybeKey = rawCard.includes(":") ? rawCard.slice(rawCard.lastIndexOf(":") + 1) : rawCard;
+      const keyMatch = maybeKey.match(/^([A-Za-z0-9_-]+)/);
+      return {
+        kind: "card",
+        cardKey: keyMatch?.[1] ?? maybeKey,
+        confidence: 0.7,
+        reasoning_summary: "",
+      };
+    }
   }
 
   throw new Error("gpt_decision_not_compact_action");
