@@ -1264,7 +1264,7 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
       onClick={onClose}
     >
       <motion.section
-        className="gb-history-modal"
+        className="gb-history-modal gb-played-history-modal"
         role="dialog"
         aria-labelledby={titleId}
         initial={{ opacity: 0, transform: "translateY(12px) scale(0.98)" }}
