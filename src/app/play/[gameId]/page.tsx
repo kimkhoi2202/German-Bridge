@@ -74,7 +74,7 @@ function LiveGameContent() {
   useGameViewportLock();
 
   useEffect(() => {
-    if (!data) return;
+    if (!shouldWatchRoom) return;
     void touchPresence({ gameId, status: "online" }).catch(() => {});
     const interval = window.setInterval(() => {
       void touchPresence({ gameId, status: "online" }).catch(() => {});
@@ -83,7 +83,7 @@ function LiveGameContent() {
       window.clearInterval(interval);
       void touchPresence({ gameId, status: "offline" }).catch(() => {});
     };
-  }, [data, gameId, touchPresence]);
+  }, [gameId, shouldWatchRoom, touchPresence]);
 
   useEffect(() => {
     if (!joinStatus || joinStatus.participantSeatIdx != null) return;

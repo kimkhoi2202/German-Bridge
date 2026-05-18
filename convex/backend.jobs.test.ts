@@ -267,6 +267,30 @@ describe("Convex backend game jobs", () => {
     ).rejects.toThrow("Room has already started");
   });
 
+  it("treats repeated host start calls for active rooms as successful retries", async () => {
+    const t = convexTest({ schema, modules }) as TestHarness;
+    const host = await authedClient(t, "qa_retry_start_host");
+
+    const room = await host.mutation(api.rooms.create, {
+      playerCount: 4,
+      decks: 2,
+      startingTricksPerHand: 5,
+      tricksPerHand: 10,
+      botMood: "gpt",
+    });
+
+    const firstStart = await host.mutation(api.rooms.start, { gameId: room.gameId, botMood: "gpt" });
+    const retryStart = await host.mutation(api.rooms.start, { gameId: room.gameId, botMood: "gpt" });
+    const view = await host.query(api.games.watch, { gameId: room.gameId });
+
+    expect(firstStart.gameId).toBe(room.gameId);
+    expect(retryStart.gameId).toBe(room.gameId);
+    expect(retryStart.alreadyStarted).toBe(true);
+    expect(view.game.status).toBe("active");
+    expect(view.state).not.toBeNull();
+    expect(view.participants).toHaveLength(4);
+  });
+
   it("lets the host randomize setup seats before starting", async () => {
     const t = convexTest({ schema, modules }) as TestHarness;
     const host = await authedClient(t, "qa_seat_host");

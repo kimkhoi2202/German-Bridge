@@ -5,7 +5,14 @@ import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { MAX_DECKS, maxTricks } from "../src/lib/cards";
 import type { Personality } from "../src/lib/bot";
-import { appendEvent, getGameOrThrow, getParticipantForUser, getParticipants, writeGameState } from "./lib/db";
+import {
+  appendEvent,
+  getGameOrThrow,
+  getParticipantForUser,
+  getParticipants,
+  getStateDoc,
+  writeGameState,
+} from "./lib/db";
 import { botMoodForSeat, botNameForSeat, createStartedState } from "./lib/gameEngine";
 import { ensureProfile, requireUserId } from "./lib/users";
 
@@ -335,7 +342,11 @@ export const start = mutation({
     const userId = await requireUserId(ctx);
     const game = await getGameOrThrow(ctx, args.gameId);
     if (game.creatorUserId !== userId) throw new Error("Only the room creator can start");
-    if (game.status !== "setup") throw new Error("Room has already started");
+    if (game.status !== "setup") {
+      const stateDoc = game.status === "active" ? await getStateDoc(ctx, game._id) : null;
+      if (stateDoc) return { gameId: game._id, alreadyStarted: true };
+      throw new Error("Room has already started");
+    }
     const participants = await getParticipants(ctx, game._id);
     const occupied = new Set(participants.map((p) => p.seatIdx));
     const now = Date.now();
