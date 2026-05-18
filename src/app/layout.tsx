@@ -10,7 +10,9 @@ export const metadata: Metadata = {
   title: "German Bridge",
   description: "A polished German Bridge table for 3–12 players.",
   icons: {
-    icon: "/favicon.svg",
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    shortcut: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/favicon.svg", type: "image/svg+xml" }],
   },
 };
 
