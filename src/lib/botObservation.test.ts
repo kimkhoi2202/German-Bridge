@@ -35,7 +35,7 @@ function twoDeckState(): GameState {
     tricksPerHand: 5,
     maxRounds: 5,
   });
-  return { ...startRound({ ...state, round: 4 }, seededRng(2026)), phase: "bidding" };
+  return { ...startRound({ ...state, round: 4 }, seededRng(2026)), phase: "bidding", bidTurn: 1 };
 }
 
 describe("createObservation", () => {
