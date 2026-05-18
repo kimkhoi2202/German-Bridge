@@ -1,0 +1,25 @@
+.git
+.next
+.codex
+.env
+.env.*
+.playwright-mcp
+.pytest_cache
+.venv-anyscale
+node_modules
+
+ai-checkpoints
+ai-data
+ai-runs
+training
+wandb
+reports
+Project Assets
+Generation Scripts
+
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.log

@@ -17,6 +17,7 @@ ai-runs/
 ai-checkpoints/
 anyscale/
 training/
+reports/
 requirements-ai.txt
 requirements-anyscale.txt
 scripts/ai-dataset-suite.ts
