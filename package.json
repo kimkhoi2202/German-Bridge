@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "rm -rf .next && next dev",
+    "dev": "next dev",
     "dev:clean": "rm -rf .next && next dev",
     "dev:turbo": "next dev --turbopack",
     "build": "rm -rf .next && NODE_ENV=production next build",
@@ -11,10 +11,12 @@
     "lint": "next lint",
     "test": "NODE_OPTIONS=--max-old-space-size=8192 vitest run",
     "test:watch": "vitest",
-    "typecheck": "rm -rf .next && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "ai:dataset": "tsx scripts/ai-dataset.ts",
     "ai:evaluate": "tsx scripts/ai-evaluate.ts",
     "ai:arena": "tsx scripts/ai-arena.ts",
+    "ai:llm:arena": "tsx scripts/llm-strategy-arena.ts",
+    "ai:llm:reasoning": "tsx scripts/llm-reasoning-tournament.ts",
     "ai:rating:internal": "tsx scripts/ai-rating-report.ts"
   },
   "dependencies": {
