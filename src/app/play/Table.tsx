@@ -507,10 +507,6 @@ export function TableView({
 
   return (
     <div className={"gb-table-wrap layout-" + layout} data-phase={state.phase}>
-      <div className="gb-table-size-warning" role="status">
-        Your screen is too small for the full table. Use a larger window to keep every seat on the rim.
-      </div>
-
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">
@@ -773,7 +769,7 @@ export function TableView({
               const cardName = `${rank} of ${SUIT_NAME[c.s]}`;
               const preMoveLabel = isPreMove
                 ? `Pre-move selected: ${cardName}`
-                : `Right-click to pre-move ${cardName}`;
+                : `Tap to pre-move ${cardName}`;
               const handlePreMove = (node: HTMLElement) => {
                 if (!canPreMove) return;
                 captureClickOrigin(c.key, node);
@@ -809,9 +805,13 @@ export function TableView({
                       : `${cardName} in your hand`
                   }
                   aria-pressed={isPreMove ? true : undefined}
-                  title={canPreMove ? "Right-click to pre-move" : undefined}
+                  title={canPreMove ? "Tap to pre-move" : undefined}
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
-                    handlePlay(event.currentTarget);
+                    if (isPlayable) {
+                      handlePlay(event.currentTarget);
+                      return;
+                    }
+                    handlePreMove(event.currentTarget);
                   }}
                   onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     if (!isPlayable && !canPreMove) return;
@@ -1020,6 +1020,10 @@ function groupByTrick(entries: PlayLogEntry[]): Array<[number, PlayLogEntry[]]> 
     ]);
 }
 
+function latestTricksFirst(entries: PlayLogEntry[]): Array<[number, PlayLogEntry[]]> {
+  return [...groupByTrick(entries)].reverse();
+}
+
 type HistoryRoundView = {
   round: number;
   tricksTotal: number;
@@ -1078,34 +1082,6 @@ function ModalCloseButton({
           d="M16.5 16.5L31.5 31.5M31.5 16.5L16.5 31.5"
         />
       </svg>
-    </button>
-  );
-}
-
-function HistoryNavButton({
-  label,
-  direction,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  direction: "previous" | "next";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="gb-history-nav-btn"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      <Icon
-        name="chevR"
-        size={22}
-        className={direction === "previous" ? "gb-history-nav-icon previous" : "gb-history-nav-icon"}
-      />
     </button>
   );
 }
@@ -1267,18 +1243,16 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
   onClose: () => void;
 }) {
   const rounds = useMemo(() => historyRoundsForState(state, playLog), [playLog, state]);
-  const [selectedRoundIndex, setSelectedRoundIndex] = useState(0);
-  const clampedRoundIndex = clamp(selectedRoundIndex, 0, Math.max(0, rounds.length - 1));
-  const selectedRound = rounds[clampedRoundIndex] ?? null;
-  const selectedPlayLog = useMemo(() => selectedRound?.playLog ?? [], [selectedRound]);
-  const groups = useMemo(() => groupByTrick(selectedPlayLog), [selectedPlayLog]);
-  const totalCards = (selectedRound?.tricksTotal ?? state.tricksTotal) * state.players.length;
-  const canGoPrevious = clampedRoundIndex < rounds.length - 1;
-  const canGoNext = clampedRoundIndex > 0;
-
-  useEffect(() => {
-    setSelectedRoundIndex((index) => clamp(index, 0, Math.max(0, rounds.length - 1)));
-  }, [rounds.length]);
+  const roundViews = useMemo(
+    () =>
+      rounds.map((round) => ({
+        round,
+        groups: latestTricksFirst(round.playLog),
+        totalCards: round.tricksTotal * state.players.length,
+      })),
+    [rounds, state.players.length],
+  );
+  const latestRound = roundViews[0]?.round ?? null;
 
   return (
     <motion.div
@@ -1304,20 +1278,6 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
             <h2 id={titleId}>History</h2>
           </div>
           <div className="gb-history-head-actions">
-            <HistoryNavButton
-              label="Previous hand"
-              direction="previous"
-              disabled={!canGoPrevious}
-              onClick={() =>
-                setSelectedRoundIndex((index) => Math.min(rounds.length - 1, index + 1))
-              }
-            />
-            <HistoryNavButton
-              label="Next hand"
-              direction="next"
-              disabled={!canGoNext}
-              onClick={() => setSelectedRoundIndex((index) => Math.max(0, index - 1))}
-            />
             <ModalCloseButton label="Close history" onClose={onClose} />
           </div>
         </div>
@@ -1325,56 +1285,80 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
         <div className="gb-history-summary gb-history-summary-plain">
           <div className="gb-history-summary-copy">
             <span className="mono">
-              Hand {selectedRound?.round ?? state.round}/{state.maxRounds}
+              Latest hand {latestRound?.round ?? state.round}/{state.maxRounds}
             </span>
             <span className="mono">
-              {selectedPlayLog.length}/{totalCards} cards
+              {roundViews.length} hand{roundViews.length === 1 ? "" : "s"} shown
             </span>
           </div>
-          {selectedRound?.trump && (
+          {latestRound?.trump && (
             <span className="gb-log-trump">
-              <CardMark card={selectedRound.trump} size="xs" />
+              <CardMark card={latestRound.trump} size="xs" />
             </span>
           )}
         </div>
 
-        <div className="gb-history-list">
-          {groups.length === 0 && <div className="gb-history-empty">No cards played yet</div>}
-          {groups.map(([trick, plays]) => {
-            const winner = plays.find((entry) => entry.winner);
-            return (
-              <section
-                key={trick}
-                className={"gb-play-log-trick" + (winner ? " complete" : " current")}
-              >
-                <div className="gb-play-log-trick-head">
-                  <span>Hand {trick}</span>
-                  <span>{winner ? state.players[winner.playerIdx]?.name : "In play"}</span>
+        <div className="gb-history-list gb-history-rounds">
+          {roundViews.length === 0 && <div className="gb-history-empty">No cards played yet</div>}
+          {roundViews.map(({ round, groups, totalCards }) => (
+            <section key={round.round} className="gb-history-round">
+              <div className="gb-history-round-head">
+                <div className="gb-history-round-copy">
+                  <span className="gb-history-round-title">Hand {round.round}</span>
+                  <span className="gb-history-round-meta mono">
+                    {round.playLog.length}/{totalCards} cards
+                  </span>
                 </div>
+                {round.trump && (
+                  <span className="gb-log-trump">
+                    <CardMark card={round.trump} size="xs" />
+                  </span>
+                )}
+              </div>
 
-                <div className="gb-play-log-plays">
-                  {plays.map((entry) => {
-                    const player = state.players[entry.playerIdx];
+              {groups.length === 0 ? (
+                <div className="gb-history-round-empty">No cards played yet</div>
+              ) : (
+                <div className="gb-history-trick-list">
+                  {groups.map(([trick, plays]) => {
+                    const winner = plays.find((entry) => entry.winner);
                     return (
-                      <div
-                        key={`${entry.trick}-${entry.order}-${entry.card.key}`}
-                        className={"gb-play-log-row" + (entry.winner ? " winner" : "")}
+                      <section
+                        key={`${round.round}-${trick}`}
+                        className={"gb-play-log-trick" + (winner ? " complete" : " current")}
                       >
-                        <span className="gb-play-order mono">{entry.order}</span>
-                        <span className="gb-play-player">{player?.name ?? "Player"}</span>
-                        <span
-                          className={"gb-play-card-chip mono " + (isRed(entry.card.s) ? "red" : "black")}
-                          aria-label={`${rankLabel(entry.card)} of ${SUIT_NAME[entry.card.s]}`}
-                        >
-                          {cardLabel(entry.card)}
-                        </span>
-                      </div>
+                        <div className="gb-play-log-trick-head">
+                          <span>Trick {trick}</span>
+                          <span>{winner ? state.players[winner.playerIdx]?.name : "In play"}</span>
+                        </div>
+
+                        <div className="gb-play-log-plays">
+                          {plays.map((entry) => {
+                            const player = state.players[entry.playerIdx];
+                            return (
+                              <div
+                                key={`${round.round}-${entry.trick}-${entry.order}-${entry.card.key}`}
+                                className={"gb-play-log-row" + (entry.winner ? " winner" : "")}
+                              >
+                                <span className="gb-play-order mono">{entry.order}</span>
+                                <span className="gb-play-player">{player?.name ?? "Player"}</span>
+                                <span
+                                  className={"gb-play-card-chip mono " + (isRed(entry.card.s) ? "red" : "black")}
+                                  aria-label={`${rankLabel(entry.card)} of ${SUIT_NAME[entry.card.s]}`}
+                                >
+                                  {cardLabel(entry.card)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
                     );
                   })}
                 </div>
-              </section>
-            );
-          })}
+              )}
+            </section>
+          ))}
         </div>
       </motion.section>
     </motion.div>

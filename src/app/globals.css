@@ -1725,28 +1725,6 @@ input:focus-visible {
   height: 100%;
 }
 
-.gb-table-size-warning {
-  position: absolute;
-  inset: 0;
-  z-index: 90;
-  display: none;
-  place-items: center;
-  padding: 28px;
-  background:
-    radial-gradient(ellipse at 50% 45%, oklch(0.18 0.034 151 / 0.92), oklch(0.04 0.014 160 / 0.97));
-  color: var(--text);
-  font-size: clamp(18px, 2vw, 24px);
-  font-weight: 800;
-  line-height: 1.2;
-  text-align: center;
-}
-
-@media (min-width: 700px) and (max-width: 1099px), (min-width: 700px) and (max-height: 620px) {
-  .gb-table-size-warning {
-    display: grid;
-  }
-}
-
 .gb-hud {
   position: absolute;
   z-index: 24;
@@ -1781,6 +1759,7 @@ input:focus-visible {
     0 1px 2px oklch(0.04 0.014 160 / 0.18),
     0 1px 0 oklch(0.96 0.012 154 / 0.036) inset;
   backdrop-filter: blur(12px);
+  flex: 0 0 auto;
   pointer-events: auto;
 }
 
@@ -1830,8 +1809,21 @@ input:focus-visible {
 
 @media (max-width: 1120px) {
   .gb-hud {
-    align-items: stretch;
-    flex-wrap: wrap;
+    right: 10px;
+    left: 10px;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: visible;
+    overscroll-behavior-x: contain;
+    pointer-events: auto;
+    scrollbar-width: none;
+    scroll-padding-inline: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .gb-hud::-webkit-scrollbar {
+    display: none;
   }
 
   .gb-hud-spacer {
@@ -1939,35 +1931,6 @@ input:focus-visible {
   flex: 0 0 auto;
 }
 
-.gb-history-nav-btn {
-  width: 42px;
-  height: 42px;
-  min-height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid oklch(0.96 0.012 154 / 0.14);
-  border-radius: 999px;
-  padding: 0;
-  background: #151819;
-  color: oklch(0.96 0.012 154 / 0.86);
-  cursor: pointer;
-  transition:
-    border-color 160ms var(--ease-out-quart),
-    background 160ms var(--ease-out-quart),
-    color 160ms var(--ease-out-quart),
-    opacity 160ms var(--ease-out-quart),
-    transform 160ms var(--ease-out-quart);
-}
-
-.gb-history-nav-btn:disabled {
-  cursor: default;
-  opacity: 0.36;
-}
-
-.gb-history-nav-icon.previous {
-  transform: rotate(180deg);
-}
-
 .gb-history-close {
   width: 48px;
   height: 48px;
@@ -2010,13 +1973,6 @@ input:focus-visible {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .gb-history-nav-btn:not(:disabled):hover {
-    border-color: oklch(0.96 0.012 154 / 0.26);
-    background: oklch(0.18 0.012 166);
-    color: var(--text);
-    transform: scale(1.03);
-  }
-
   .gb-history-close:hover {
     color: var(--text);
     transform: scale(1.03);
@@ -2062,6 +2018,64 @@ input:focus-visible {
   overflow: auto;
   overscroll-behavior: contain;
   padding: 18px 24px 24px;
+}
+
+.gb-history-rounds {
+  display: flex;
+  flex-direction: column;
+}
+
+.gb-history-round {
+  border: 1px solid var(--control-border);
+  border-radius: 16px;
+  background: var(--control-bg);
+  overflow: hidden;
+}
+
+.gb-history-round-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--control-border);
+}
+
+.gb-history-round-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.gb-history-round-title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.gb-history-round-meta {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.gb-history-trick-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.gb-history-round-empty {
+  min-height: 88px;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .gb-history-empty {
@@ -4915,8 +4929,8 @@ input:focus-visible {
   }
 
   .gb-hud {
-    align-items: stretch;
-    flex-wrap: wrap;
+    align-items: center;
+    flex-wrap: nowrap;
   }
 
   .gb-hud-spacer {
@@ -5074,7 +5088,7 @@ input:focus-visible {
     min-width: 0;
     max-width: 100%;
     min-height: 0;
-    max-height: min(236px, calc(100dvh - var(--nav-h) - var(--hero-stack) - 88px));
+    max-height: min(236px, calc(100dvh - var(--nav-h) - 116px));
     width: 100%;
   }
 
@@ -5095,14 +5109,24 @@ input:focus-visible {
   }
 
   .gb-bid-panel .gb-bid-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title trump"
+      "meta meta";
     align-items: center;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: 4px;
-    margin-bottom: 7px;
+    column-gap: 8px;
+    row-gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .gb-bid-panel .gb-bid-titleblock {
+    grid-area: title;
+    min-width: 0;
   }
 
   .gb-bid-panel .gb-bid-trump-inline {
-    justify-self: center;
+    grid-area: trump;
+    justify-self: end;
   }
 
   .gb-bid-panel .gb-bid-title {
@@ -5129,12 +5153,16 @@ input:focus-visible {
   }
 
   .gb-bid-panel .gb-bid-context {
+    grid-area: meta;
     display: flex;
+    justify-self: stretch;
   }
 
   .gb-bid-meta-chip {
+    width: 100%;
     padding: 5px 6px;
     font-size: clamp(10px, 3vw, 12px);
+    text-align: center;
   }
 
   .gb-bid-panel .gb-bid-numbers {
@@ -5176,6 +5204,65 @@ input:focus-visible {
 
   .gb-table-wrap[data-phase="bidding"] .gb-hero > .gb-hero-meta {
     display: none;
+  }
+
+  .gb-modal-scrim {
+    place-items: start center;
+    padding: 10px 10px calc(var(--nav-h) + 10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .gb-summary-card,
+  .gb-end-card,
+  .gb-history-card,
+  .gb-rules-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - var(--nav-h) - 20px - env(safe-area-inset-bottom, 0px));
+    border-radius: 18px;
+  }
+
+  .gb-summary-card {
+    padding: 16px;
+  }
+
+  .gb-summary-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .gb-summary-h {
+    font-size: clamp(22px, 8vw, 28px);
+    line-height: 1.03;
+  }
+
+  .gb-leaderboard-list {
+    gap: 8px;
+    padding: 12px 14px 16px;
+  }
+
+  .gb-leaderboard-row {
+    grid-template-columns: 28px minmax(0, 1fr) minmax(38px, auto);
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .gb-leaderboard-rank {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+
+  .gb-leaderboard-hand {
+    grid-column: 2;
+    font-size: 10.5px;
+  }
+
+  .gb-leaderboard-score {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-size: 18px;
   }
 
   .gb-summary-row {

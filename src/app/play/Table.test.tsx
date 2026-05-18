@@ -190,14 +190,14 @@ describe("seatPos", () => {
         onPreMove={handlePreMove}
       />,
     );
-    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
+    const card = screen.getByRole("button", { name: "Tap to pre-move A of Spades" });
 
-    expect(card).toHaveAttribute("title", "Right-click to pre-move");
+    expect(card).toHaveAttribute("title", "Tap to pre-move");
     expect(card).toHaveClass("pre-move-selectable");
     expect(card).not.toBeDisabled();
     expect(container.querySelectorAll(".gb-hero-card.pre-move-selectable")).toHaveLength(2);
 
-    fireEvent.contextMenu(card);
+    fireEvent.click(card);
 
     expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
   });
@@ -214,13 +214,29 @@ describe("seatPos", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Right-click to pre-move K of Hearts" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Tap to pre-move K of Hearts" })).toHaveClass(
       "pre-move-selectable",
     );
     expect(screen.getByRole("button", { name: "A of Spades in your hand" })).toBeDisabled();
   });
 
-  it("right-click plays a legal card when it is your turn", () => {
+  it("click plays a legal card when it is your turn", () => {
+    const handlePlay = vi.fn();
+    render(
+      <TableView
+        state={tableState({ hands: [[kingHearts, aceSpades]], turnIdx: 0 })}
+        onPlay={handlePlay}
+        onPreMove={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Play A of Spades" });
+
+    fireEvent.click(card);
+
+    expect(handlePlay).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("right-click still plays a legal card when it is your turn", () => {
     const handlePlay = vi.fn();
     render(
       <TableView
@@ -251,12 +267,12 @@ describe("seatPos", () => {
         onPreMove={handlePreMove}
       />,
     );
-    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
+    const card = screen.getByRole("button", { name: "Tap to pre-move A of Spades" });
 
     expect(card).toHaveClass("pre-move-selectable");
     expect(card).not.toBeDisabled();
 
-    fireEvent.contextMenu(card);
+    fireEvent.click(card);
 
     expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
   });
@@ -328,19 +344,21 @@ describe("seatPos", () => {
 
     expect(screen.getByRole("dialog", { name: "History" })).toBeInTheDocument();
     expect(screen.queryByText("Played cards")).not.toBeInTheDocument();
-    expect(screen.getByText("Hand 2/10")).toBeInTheDocument();
+    expect(screen.getByText("Latest hand 2/10")).toBeInTheDocument();
+    expect(screen.getByText("2 hands shown")).toBeInTheDocument();
     expect(screen.getByText("1/6 cards")).toBeInTheDocument();
+    expect(screen.getByText("2/3 cards")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".gb-history-round-title")].map((node) => node.textContent)).toEqual([
+      "Hand 2",
+      "Hand 1",
+    ]);
     expect(screen.getByText("Hand 1")).toBeInTheDocument();
+    expect(screen.getAllByText("Trick 1")).toHaveLength(2);
     expect(screen.queryByText("Cards 1")).not.toBeInTheDocument();
     expect(screen.getByText("K♥")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Previous hand" }));
-
-    expect(screen.getByText("Hand 1/10")).toBeInTheDocument();
-    expect(screen.getByText("2/3 cards")).toBeInTheDocument();
     expect(screen.getByText("Q♣")).toBeInTheDocument();
     expect(screen.getByText("A♣")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Previous hand" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next hand" })).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Previous hand" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Next hand" })).not.toBeInTheDocument();
   });
 });
