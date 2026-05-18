@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { AuthGate } from "@/components/AuthGate";
@@ -190,7 +190,7 @@ function LiveGameContent() {
     }
   }
 
-  async function handlePlayCard(card: Card) {
+  const handlePlayCard = useCallback(async (card: Card) => {
     if (
       !canSendPlayCardIntent({
         state: data?.state,
@@ -216,7 +216,7 @@ function LiveGameContent() {
       setPendingPlayCardKey(null);
       setError(err instanceof Error ? err.message : "Action failed");
     }
-  }
+  }, [data?.game.sequence, data?.legalCardKeys, data?.state, gameId, playCard]);
 
   function handlePreMoveCard(card: Card | null) {
     if (!card) {
@@ -252,7 +252,7 @@ function LiveGameContent() {
     }
 
     void handlePlayCard(card);
-  }, [data?.game.sequence, data?.legalCardKeys, data?.state, preMoveCardKey]);
+  }, [data?.game.sequence, data?.legalCardKeys, data?.state, handlePlayCard, preMoveCardKey]);
 
   useEffect(() => {
     if (!preMoveCardKey) return;
