@@ -4198,8 +4198,8 @@ input:focus-visible {
   min-height: 100dvh;
 }
 
-.gb-auth-card {
-  width: min(560px, calc(100vw - 28px));
+.gb-lobby-card.gb-auth-card {
+  width: min(680px, calc(100vw - 44px));
 }
 
 .gb-auth-tabs {
