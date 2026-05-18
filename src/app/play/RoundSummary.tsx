@@ -6,15 +6,17 @@ import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/base/buttons/button";
 import { Icon } from "@/components/Icon";
 import { CardMark } from "@/components/CardMark";
-import { cumulativeScores, type GameState } from "@/lib/game";
+import { cumulativeScores, tricksForRound, type GameState } from "@/lib/game";
 
 export function RoundSummary({
   state: stateProp,
   onAdvance,
+  canAdvance = true,
   isAdvancing = false,
 }: {
   state?: GameState | null;
   onAdvance?: () => void;
+  canAdvance?: boolean;
   isAdvancing?: boolean;
 }) {
   const localState = useMatch((s) => s.state);
@@ -37,7 +39,11 @@ export function RoundSummary({
     }))
     .sort((a, b) => b.total - a.total || a.playerIndex - b.playerIndex);
   const isFinalHand = state.round >= state.maxRounds;
-  const nextHandSize = Math.min(state.round + 1, state.tricksPerHand);
+  const nextHandSize = tricksForRound(
+    state.round + 1,
+    state.tricksPerHand,
+    state.startingTricksPerHand ?? 1,
+  );
 
   return (
     <div
@@ -50,7 +56,7 @@ export function RoundSummary({
         <div className="gb-summary-head">
           <div>
             <div className="eyebrow">Hand settled</div>
-            <h2 id={titleId} className="display gb-summary-h">The book closes.</h2>
+            <h2 id={titleId} className="display gb-summary-h">Current Leaderboard</h2>
           </div>
           {last?.trump && (
             <div className="gb-summary-trump">
@@ -92,17 +98,23 @@ export function RoundSummary({
               <div style={{ width: `${Math.min(100, (state.round / state.maxRounds) * 100)}%` }} />
             </div>
           </div>
-          <Button
-            size="md"
-            isDisabled={isAdvancing}
-            isLoading={isAdvancing}
-            showTextWhileLoading
-            onClick={() => {
-              if (!isAdvancing) advance();
-            }}
-          >
-            {isFinalHand ? "See final" : "Deal next hand"} <Icon name="chevR" size={14} />
-          </Button>
+          {canAdvance ? (
+            <Button
+              size="md"
+              isDisabled={isAdvancing}
+              isLoading={isAdvancing}
+              showTextWhileLoading
+              onClick={() => {
+                if (!isAdvancing) advance();
+              }}
+            >
+              {isFinalHand ? "See final" : "Deal next hand"} <Icon name="chevR" size={14} />
+            </Button>
+          ) : (
+            <div className="gb-summary-wait" role="status">
+              Waiting for the host
+            </div>
+          )}
         </div>
       </div>
     </div>

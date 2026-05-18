@@ -17,10 +17,12 @@ import { useMatch } from "@/store/match";
 import { useSettings } from "@/store/settings";
 import { PlayingCard } from "@/components/PlayingCard";
 import { CardMark } from "@/components/CardMark";
+import { Icon } from "@/components/Icon";
 import { useRouter } from "next/navigation";
 import { SUIT_CHAR, SUIT_NAME, isRed, sortHand, legalCards } from "@/lib/cards";
 import type { Card } from "@/lib/cards";
 import { cumulativeScores, type GameState, type PlayLogEntry } from "@/lib/game";
+import { resolveTrick } from "@/lib/trick";
 import { formatCurrentHand } from "@/lib/matchLabels";
 import { easeOutQuart, exitTransition, stateTransition } from "@/lib/uiMotion";
 import { BiddingDial } from "./BiddingDial";
@@ -250,6 +252,12 @@ export function TableView({
     () => currentTrickPlays.map((play) => play.playKey),
     [currentTrickPlays],
   );
+  const currentWinningPlayKey = useMemo(() => {
+    const currentLeadSuit = currentTrickPlays[0]?.card.s ?? null;
+    if (currentLeadSuit == null) return null;
+    const winningPlay = resolveTrick(currentTrickPlays, currentLeadSuit, state?.trumpCard?.s ?? null);
+    return currentTrickPlays.find((play) => play === winningPlay)?.playKey ?? null;
+  }, [currentTrickPlays, state?.trumpCard?.s]);
 
   useLayoutEffect(() => {
     if (!state) {
@@ -481,6 +489,10 @@ export function TableView({
 
   return (
     <div className={"gb-table-wrap layout-" + layout} data-phase={state.phase}>
+      <div className="gb-table-size-warning" role="status">
+        Your screen is too small for the full table. Use a larger window to keep every seat on the rim.
+      </div>
+
       {/* HUD */}
       <div className="gb-hud">
         <div className="gb-hud-pill">
@@ -605,6 +617,7 @@ export function TableView({
                   >
                     {currentTrickPlays.map((p, index) => {
                       const isWinner = state.trickWinner === p.playerIdx;
+                      const isCurrentWinner = currentWinningPlayKey === p.playKey;
                       return (
                         <motion.div
                           ref={setTargetRef(p.playKey)}
@@ -619,6 +632,7 @@ export function TableView({
                           className={
                             "gb-trick-card" +
                             (isWinner ? " winner" : "") +
+                            (isCurrentWinner ? " current-winner" : "") +
                             (hiddenPlayKeys.has(p.playKey) ? " settling" : "") +
                             (collectingPlayKeys.has(p.playKey) ? " collecting" : "")
                           }
@@ -727,17 +741,18 @@ export function TableView({
               const isYourTurn =
                 state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null;
               const isLegal = state.phase !== "playing" || myLegal?.has(c.key) === true;
+              const isPreMoveForNextTrick =
+                state.phase === "trick-end" ||
+                state.currentTrick.some((play) => play.playerIdx === 0);
               const isTrump = c.s === trumpSuit && showTrumpHints;
               const isPlayable = !cardPlayDisabled && isYourTurn && isLegal;
               const canPreMove =
                 !!onPreMove &&
                 !cardPlayDisabled &&
-                state.phase === "playing" &&
+                (state.phase === "playing" || state.phase === "trick-end") &&
                 !isYourTurn &&
-                state.trickWinner == null &&
-                leadSuit != null &&
                 state.players[0]?.isHuman === true &&
-                isLegal;
+                (isPreMoveForNextTrick || isLegal);
               const isPreMove = preMoveCardKey === c.key;
               const disabled = !isPlayable && !canPreMove;
               const rank = c.r === "T" ? "10" : c.r;
@@ -749,6 +764,12 @@ export function TableView({
                 if (!canPreMove) return;
                 captureClickOrigin(c.key, node);
                 onPreMove?.(isPreMove ? null : c);
+              };
+              const handlePlay = (node: HTMLElement) => {
+                if (!isPlayable) return;
+                captureClickOrigin(c.key, node);
+                if (onPlay) onPlay(c);
+                else localPlay(0, c);
               };
               return (
                 <button
@@ -776,14 +797,15 @@ export function TableView({
                   aria-pressed={isPreMove ? true : undefined}
                   title={canPreMove ? "Right-click to pre-move" : undefined}
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
-                    if (!isPlayable) return;
-                    captureClickOrigin(c.key, event.currentTarget);
-                    if (onPlay) onPlay(c);
-                    else localPlay(0, c);
+                    handlePlay(event.currentTarget);
                   }}
                   onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => {
-                    if (!canPreMove) return;
+                    if (!isPlayable && !canPreMove) return;
                     event.preventDefault();
+                    if (isPlayable) {
+                      handlePlay(event.currentTarget);
+                      return;
+                    }
                     handlePreMove(event.currentTarget);
                   }}
                   onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -976,6 +998,46 @@ function groupByTrick(entries: PlayLogEntry[]): Array<[number, PlayLogEntry[]]> 
     ]);
 }
 
+type HistoryRoundView = {
+  round: number;
+  tricksTotal: number;
+  trump: Card | null;
+  playLog: PlayLogEntry[];
+};
+
+function historyRoundsForState(state: GameState, currentPlayLog: PlayLogEntry[]): HistoryRoundView[] {
+  const completedRounds = state.history.map((round) => ({
+    round: round.round,
+    tricksTotal: round.tricksTotal ?? round.round,
+    trump: round.trump,
+    playLog:
+      round.playLog && round.playLog.length > 0
+        ? round.playLog
+        : round.round === state.round
+          ? currentPlayLog
+          : [],
+  }));
+  const hasCurrentRoundRecord = state.history.some((round) => round.round === state.round);
+  const shouldShowCurrentRound =
+    state.round > 0 &&
+    state.trumpCard != null &&
+    !hasCurrentRoundRecord &&
+    state.phase !== "lobby" &&
+    state.phase !== "match-end";
+
+  if (!shouldShowCurrentRound) return completedRounds;
+
+  return [
+    ...completedRounds,
+    {
+      round: state.round,
+      tricksTotal: state.tricksTotal,
+      trump: state.trumpCard,
+      playLog: currentPlayLog,
+    },
+  ];
+}
+
 function ModalCloseButton({
   label,
   onClose,
@@ -992,6 +1054,34 @@ function ModalCloseButton({
           d="M16.5 16.5L31.5 31.5M31.5 16.5L16.5 31.5"
         />
       </svg>
+    </button>
+  );
+}
+
+function HistoryNavButton({
+  label,
+  direction,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  direction: "previous" | "next";
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="gb-history-nav-btn"
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <Icon
+        name="chevR"
+        size={22}
+        className={direction === "previous" ? "gb-history-nav-icon previous" : "gb-history-nav-icon"}
+      />
     </button>
   );
 }
@@ -1090,8 +1180,21 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
   titleId: string;
   onClose: () => void;
 }) {
-  const groups = useMemo(() => groupByTrick(playLog), [playLog]);
-  const totalCards = state.tricksTotal * state.players.length;
+  const rounds = useMemo(() => historyRoundsForState(state, playLog), [playLog, state]);
+  const [selectedRoundIndex, setSelectedRoundIndex] = useState(() =>
+    Math.max(0, rounds.length - 1),
+  );
+  const clampedRoundIndex = clamp(selectedRoundIndex, 0, Math.max(0, rounds.length - 1));
+  const selectedRound = rounds[clampedRoundIndex] ?? null;
+  const selectedPlayLog = selectedRound?.playLog ?? [];
+  const groups = useMemo(() => groupByTrick(selectedPlayLog), [selectedPlayLog]);
+  const totalCards = (selectedRound?.tricksTotal ?? state.tricksTotal) * state.players.length;
+  const canGoPrevious = clampedRoundIndex > 0;
+  const canGoNext = clampedRoundIndex < rounds.length - 1;
+
+  useEffect(() => {
+    setSelectedRoundIndex((index) => clamp(index, 0, Math.max(0, rounds.length - 1)));
+  }, [rounds.length]);
 
   return (
     <motion.div
@@ -1114,19 +1217,39 @@ const PlayedCardsModal = memo(function PlayedCardsModal({
       >
         <div className="gb-history-head">
           <div>
-            <div className="eyebrow">History</div>
-            <h2 id={titleId}>Played cards</h2>
+            <h2 id={titleId}>History</h2>
           </div>
-          <ModalCloseButton label="Close history" onClose={onClose} />
+          <div className="gb-history-head-actions">
+            <HistoryNavButton
+              label="Previous hand"
+              direction="previous"
+              disabled={!canGoPrevious}
+              onClick={() => setSelectedRoundIndex((index) => Math.max(0, index - 1))}
+            />
+            <HistoryNavButton
+              label="Next hand"
+              direction="next"
+              disabled={!canGoNext}
+              onClick={() =>
+                setSelectedRoundIndex((index) => Math.min(rounds.length - 1, index + 1))
+              }
+            />
+            <ModalCloseButton label="Close history" onClose={onClose} />
+          </div>
         </div>
 
-        <div className="gb-history-summary">
-          <span className="mono">
-            {playLog.length}/{totalCards} cards
-          </span>
-          {state.trumpCard && (
+        <div className="gb-history-summary gb-history-summary-plain">
+          <div className="gb-history-summary-copy">
+            <span className="mono">
+              Hand {selectedRound?.round ?? state.round}/{state.maxRounds}
+            </span>
+            <span className="mono">
+              {selectedPlayLog.length}/{totalCards} cards
+            </span>
+          </div>
+          {selectedRound?.trump && (
             <span className="gb-log-trump">
-              <CardMark card={state.trumpCard} size="xs" />
+              <CardMark card={selectedRound.trump} size="xs" />
             </span>
           )}
         </div>

@@ -3,7 +3,8 @@ export type SeatZone = "left" | "top" | "right" | "bottom";
 const SEAT_OVAL_CENTER_X = 50;
 const SEAT_OVAL_CENTER_Y = 50.6;
 const SEAT_OVAL_RADIUS_X = 43.8;
-const SEAT_OVAL_RADIUS_Y = 38.1;
+const SEAT_OVAL_RADIUS_Y = 40.7;
+const SIDE_SEAT_EDGE_X = 3.4;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -35,8 +36,10 @@ export function seatPos(playerIdx: number, playerCount: number): { x: number; y:
   const x = roundSeatPercent(SEAT_OVAL_CENTER_X + SEAT_OVAL_RADIUS_X * Math.cos(angle));
   const y = roundSeatPercent(SEAT_OVAL_CENTER_Y + SEAT_OVAL_RADIUS_Y * Math.sin(angle));
   const zone = seatZoneForPoint(x, y);
+  const anchoredX =
+    zone === "left" ? SIDE_SEAT_EDGE_X : zone === "right" ? 100 - SIDE_SEAT_EDGE_X : x;
 
-  return { x, y, zone };
+  return { x: roundSeatPercent(anchoredX), y, zone };
 }
 
 export function seatDensity(playerCount: number) {

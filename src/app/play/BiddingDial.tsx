@@ -155,7 +155,7 @@ export function BiddingDial({
           )}
           <div className="gb-bid-context">
             <span className="gb-bid-meta-chip mono">
-              Total bids: {placedBidTotal}
+              Total bids so far: {placedBidTotal}
             </span>
           </div>
         </div>

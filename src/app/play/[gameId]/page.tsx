@@ -337,7 +337,11 @@ function LiveGameContent() {
               <div className="gb-live-meta">
                 {data.game.playerCount} players · {data.game.decks} deck
                 {data.game.decks > 1 ? "s" : ""} ·{" "}
-                {formatHandLadder(data.game.tricksPerHand, data.game.maxRounds)}
+                {formatHandLadder(
+                  data.game.tricksPerHand,
+                  data.game.maxRounds,
+                  data.game.startingTricksPerHand ?? 1,
+                )}
               </div>
               <div className="gb-field">
                 <div className="gb-field-label">Bot style for empty seats</div>
@@ -363,7 +367,7 @@ function LiveGameContent() {
                   size="md"
                   onClick={() => run(() => startRoom({ gameId, botMood }))}
                 >
-                  Deal first hand
+                  Start game
                 </Button>
               </div>
             </div>
@@ -403,6 +407,7 @@ function LiveGameContent() {
       {data.state.phase === "round-end" && (
         <RoundSummary
           state={data.state}
+          canAdvance={data.viewerIsHost}
           isAdvancing={pendingAdvance}
           onAdvance={handleAdvanceRound}
         />

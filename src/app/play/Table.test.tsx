@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { humanSeatPos, seatPos } from "./tableLayout";
 import { TableView } from "./Table";
@@ -20,6 +20,12 @@ const players: Player[] = [
 ];
 
 const trump: Card = { r: "A", s: "s", d: 0, key: "As-0-test" };
+const kingHearts: Card = { r: "K", s: "h", d: 0, key: "Kh-0-test" };
+const aceSpades: Card = { r: "A", s: "s", d: 0, key: "As-1-test" };
+const fourClubs: Card = { r: "4", s: "c", d: 0, key: "4c-0-test" };
+const queenClubs: Card = { r: "Q", s: "c", d: 0, key: "Qc-0-test" };
+const aceClubs: Card = { r: "A", s: "c", d: 0, key: "Ac-0-test" };
+const twoSpades: Card = { r: "2", s: "s", d: 0, key: "2s-0-test" };
 
 function tableState(partial: Partial<GameState> = {}): GameState {
   return {
@@ -31,7 +37,7 @@ function tableState(partial: Partial<GameState> = {}): GameState {
     round: 1,
     dealerIdx: 2,
     history: [],
-    hands: [[{ r: "K", s: "h", d: 0, key: "Kh-0-test" }], [], []],
+    hands: [[kingHearts], [], []],
     trumpCard: trump,
     tricksTotal: 1,
     bids: [0, 1, 0],
@@ -45,6 +51,12 @@ function tableState(partial: Partial<GameState> = {}): GameState {
     trickWinner: null,
     ...partial,
   };
+}
+
+function trickCardByAltText(altText: string): HTMLElement {
+  const trickCard = screen.getByAltText(altText).closest(".gb-trick-card");
+  expect(trickCard).not.toBeNull();
+  return trickCard as HTMLElement;
 }
 
 describe("seatPos", () => {
@@ -91,8 +103,8 @@ describe("seatPos", () => {
     const [, topSeat] = Array.from({ length: 3 }, (_, index) => seatPos(index + 1, 4));
 
     expect(topSeat.x).toBe(50);
-    expect(topSeat.y).toBeGreaterThanOrEqual(12);
-    expect(topSeat.y).toBeLessThanOrEqual(14);
+    expect(topSeat.y).toBeGreaterThanOrEqual(9);
+    expect(topSeat.y).toBeLessThanOrEqual(11);
   });
 
   it("places the human seat on the same oval rim path as the other seats", () => {
@@ -100,8 +112,20 @@ describe("seatPos", () => {
 
     expect(humanSeat.zone).toBe("bottom");
     expect(humanSeat.x).toBe(50);
-    expect(humanSeat.y).toBeGreaterThanOrEqual(88);
-    expect(humanSeat.y).toBeLessThanOrEqual(90);
+    expect(humanSeat.y).toBeGreaterThanOrEqual(91);
+    expect(humanSeat.y).toBeLessThanOrEqual(92);
+  });
+
+  it("pulls exact left and right side seats outward onto the table rim", () => {
+    const leftSeat = seatPos(3, 12);
+    const rightSeat = seatPos(9, 12);
+
+    expect(leftSeat.zone).toBe("left");
+    expect(leftSeat.x).toBeGreaterThanOrEqual(3);
+    expect(leftSeat.x).toBeLessThanOrEqual(4);
+    expect(rightSeat.zone).toBe("right");
+    expect(rightSeat.x).toBeGreaterThanOrEqual(96);
+    expect(rightSeat.x).toBeLessThanOrEqual(97);
   });
 
   it("shows the compact hand label and a separate current bid total pill", () => {
@@ -132,5 +156,165 @@ describe("seatPos", () => {
 
     expect(container.querySelector(".gb-bid-tally")).not.toBeInTheDocument();
     expect(container.querySelector(".gb-center-meta")).not.toBeInTheDocument();
+  });
+
+  it("offers pre-move on out-of-turn cards before the lead suit is known", () => {
+    const handlePreMove = vi.fn();
+    const { container } = render(
+      <TableView
+        state={tableState({ hands: [[kingHearts, aceSpades], [], []], turnIdx: 1 })}
+        onPreMove={handlePreMove}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
+
+    expect(card).toHaveAttribute("title", "Right-click to pre-move");
+    expect(card).toHaveClass("pre-move-selectable");
+    expect(card).not.toBeDisabled();
+    expect(container.querySelectorAll(".gb-hero-card.pre-move-selectable")).toHaveLength(2);
+
+    fireEvent.contextMenu(card);
+
+    expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("only offers pre-move on legal cards after the first card is led", () => {
+    render(
+      <TableView
+        state={tableState({
+          hands: [[kingHearts, aceSpades], [], []],
+          turnIdx: 2,
+          currentTrick: [{ playerIdx: 1, card: { r: "2", s: "h", d: 0, key: "2h-0-test" } }],
+        })}
+        onPreMove={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Right-click to pre-move K of Hearts" })).toHaveClass(
+      "pre-move-selectable",
+    );
+    expect(screen.getByRole("button", { name: "A of Spades in your hand" })).toBeDisabled();
+  });
+
+  it("right-click plays a legal card when it is your turn", () => {
+    const handlePlay = vi.fn();
+    render(
+      <TableView
+        state={tableState({ hands: [[kingHearts, aceSpades]], turnIdx: 0 })}
+        onPlay={handlePlay}
+        onPreMove={vi.fn()}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Play A of Spades" });
+
+    fireEvent.contextMenu(card);
+
+    expect(handlePlay).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("offers next-trick pre-move after the viewer has already played this trick", () => {
+    const handlePreMove = vi.fn();
+    render(
+      <TableView
+        state={tableState({
+          hands: [[kingHearts, aceSpades], [], []],
+          turnIdx: 2,
+          currentTrick: [
+            { playerIdx: 1, card: { r: "2", s: "h", d: 0, key: "2h-0-test" } },
+            { playerIdx: 0, card: { r: "3", s: "c", d: 0, key: "3c-0-test" } },
+          ],
+        })}
+        onPreMove={handlePreMove}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Right-click to pre-move A of Spades" });
+
+    expect(card).toHaveClass("pre-move-selectable");
+    expect(card).not.toBeDisabled();
+
+    fireEvent.contextMenu(card);
+
+    expect(handlePreMove).toHaveBeenCalledWith(aceSpades);
+  });
+
+  it("highlights the strongest current trick card in the lead suit", () => {
+    const { container } = render(
+      <TableView
+        state={tableState({
+          currentTrick: [
+            { playerIdx: 1, card: fourClubs },
+            { playerIdx: 2, card: queenClubs },
+          ],
+          turnIdx: 0,
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll(".gb-trick-card.current-winner")).toHaveLength(1);
+    expect(trickCardByAltText("4 Clubs of playing card")).not.toHaveClass("current-winner");
+    expect(trickCardByAltText("Q Clubs of playing card")).toHaveClass("current-winner");
+  });
+
+  it("highlights trump as the strongest current trick card", () => {
+    const { container } = render(
+      <TableView
+        state={tableState({
+          currentTrick: [
+            { playerIdx: 1, card: aceClubs },
+            { playerIdx: 2, card: twoSpades },
+          ],
+          turnIdx: 0,
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll(".gb-trick-card.current-winner")).toHaveLength(1);
+    expect(trickCardByAltText("A Clubs of playing card")).not.toHaveClass("current-winner");
+    expect(trickCardByAltText("2 Spades of playing card")).toHaveClass("current-winner");
+  });
+
+  it("lets the history modal navigate between completed and current hands", () => {
+    const { container } = render(
+      <TableView
+        state={tableState({
+          round: 2,
+          maxRounds: 10,
+          tricksTotal: 2,
+          history: [
+            {
+              round: 1,
+              tricksTotal: 1,
+              trump: fourClubs,
+              bids: [0, 1, 0],
+              won: [0, 1, 0],
+              scores: [10, 11, 10],
+              dealerIdx: 2,
+              playLog: [
+                { trick: 1, order: 1, playerIdx: 1, card: queenClubs },
+                { trick: 1, order: 2, playerIdx: 2, card: aceClubs, winner: true },
+              ],
+            },
+          ],
+          playLog: [{ trick: 1, order: 1, playerIdx: 0, card: kingHearts }],
+        })}
+      />,
+    );
+
+    fireEvent.click(container.querySelector(".gb-hud-btn.history")!);
+
+    expect(screen.getByRole("dialog", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByText("Played cards")).not.toBeInTheDocument();
+    expect(screen.getByText("Hand 2/10")).toBeInTheDocument();
+    expect(screen.getByText("1/6 cards")).toBeInTheDocument();
+    expect(screen.getByText("K♥")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous hand" }));
+
+    expect(screen.getByText("Hand 1/10")).toBeInTheDocument();
+    expect(screen.getByText("2/3 cards")).toBeInTheDocument();
+    expect(screen.getByText("Q♣")).toBeInTheDocument();
+    expect(screen.getByText("A♣")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous hand" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next hand" })).not.toBeDisabled();
   });
 });

@@ -52,7 +52,7 @@ import {
 import { requireUserId } from "./lib/users";
 import { internal } from "./_generated/api";
 
-const DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS = 512;
+const DEFAULT_GPT_BRIDGE_MAX_OUTPUT_TOKENS = 1024;
 const DEFAULT_GPT_BRIDGE_MAX_ATTEMPTS = 3;
 const DEFAULT_GPT_BRIDGE_RETRY_DELAY_MS = 1800;
 
@@ -115,6 +115,18 @@ function outputTextFromOpenAiResponse(payload: unknown) {
     }
   }
   return parts.join("");
+}
+
+function incompleteReasonFromOpenAiResponse(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as { status?: unknown; incomplete_details?: unknown };
+  if (root.status !== "incomplete") return null;
+  const details = root.incomplete_details;
+  if (details && typeof details === "object") {
+    const reason = (details as { reason?: unknown }).reason;
+    if (typeof reason === "string" && reason.trim()) return reason.trim();
+  }
+  return "unknown";
 }
 
 function requestIdFromOpenAiResponse(payload: unknown, headerRequestId: string | null) {
@@ -260,6 +272,7 @@ export const watch = query({
     return {
       game,
       viewerSeatIdx: participant.seatIdx,
+      viewerIsHost: game.creatorUserId === userId,
       inviteCode: game.inviteCode,
       participants: participants.sort((a, b) => a.seatIdx - b.seatIdx),
       presence,
@@ -353,6 +366,7 @@ export const advanceRound = mutation({
     const userId = await requireUserId(ctx);
     const game = await getGameOrThrow(ctx, args.gameId);
     const participant = await requireParticipant(ctx, game._id, userId);
+    if (game.creatorUserId !== userId) throw new Error("Only the host can advance rounds");
     if (game.status !== "active") throw new Error("Game is not active");
     let state = await getStateOrThrow(ctx, game._id);
     if (state.phase !== "round-end") throw new Error("Round is not ready to advance");
@@ -697,6 +711,8 @@ export const gptBotTurn = internalAction({
         throw new Error(`openai_${response.status}:${shortFailureReason(errorMessage ?? response.statusText)}`);
       }
 
+      const incompleteReason = incompleteReasonFromOpenAiResponse(payload);
+      if (incompleteReason) throw new Error(`openai_incomplete:${incompleteReason}`);
       const outputText = outputTextFromOpenAiResponse(payload);
       if (!outputText.trim()) throw new Error("openai_empty_output");
       const parsed = parseGptBridgeDecision(outputText);

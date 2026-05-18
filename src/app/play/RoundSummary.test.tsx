@@ -1,4 +1,4 @@
-import { render, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { RoundSummary } from "./RoundSummary";
 import type { Card } from "@/lib/cards";
@@ -78,5 +78,18 @@ describe("RoundSummary", () => {
 
     expect(within(rows[3] as HTMLElement).getByText("Dax")).toBeInTheDocument();
     expect(rows[3]).toHaveTextContent("→ 5");
+  });
+
+  it("shows a host wait state instead of the advance button for non-host players", () => {
+    render(
+      <RoundSummary
+        state={roundEndState()}
+        canAdvance={false}
+        onAdvance={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for the host");
+    expect(screen.queryByRole("button", { name: /see final/i })).not.toBeInTheDocument();
   });
 });

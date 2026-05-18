@@ -69,6 +69,42 @@ async function driveToCompletion(t: TestClient, player: TestClient, gameId: Id<"
   throw new Error("Game did not complete within the expected number of server steps");
 }
 
+async function driveToRoundEnd(
+  t: TestClient,
+  host: TestClient,
+  guest: TestClient,
+  gameId: Id<"games">,
+) {
+  for (let step = 0; step < 60; step += 1) {
+    await flushJobs(t);
+    const hostView = await host.query(api.games.watch, { gameId });
+    if (hostView.state?.phase === "round-end") return hostView;
+
+    if (hostView.state?.phase === "bidding" && hostView.legalBids.length > 0) {
+      await host.mutation(api.games.placeBid, { gameId, bid: hostView.legalBids[0] });
+      continue;
+    }
+
+    if (hostView.state?.phase === "playing" && hostView.legalCardKeys.length > 0) {
+      await host.mutation(api.games.playCard, { gameId, cardKey: hostView.legalCardKeys[0] });
+      continue;
+    }
+
+    const guestView = await guest.query(api.games.watch, { gameId });
+    if (guestView.state?.phase === "bidding" && guestView.legalBids.length > 0) {
+      await guest.mutation(api.games.placeBid, { gameId, bid: guestView.legalBids[0] });
+      continue;
+    }
+
+    if (guestView.state?.phase === "playing" && guestView.legalCardKeys.length > 0) {
+      await guest.mutation(api.games.playCard, { gameId, cardKey: guestView.legalCardKeys[0] });
+      continue;
+    }
+  }
+
+  throw new Error("Game did not reach round-end within the expected number of server steps");
+}
+
 describe("Convex backend game jobs", () => {
   it("requires auth before exposing protected backend data", async () => {
     const t = convexTest({ schema, modules });
@@ -93,6 +129,7 @@ describe("Convex backend game jobs", () => {
       const room = await player.mutation(api.rooms.create, {
         playerCount: 4,
         decks: 1,
+        startingTricksPerHand: 2,
         tricksPerHand: 2,
         botMood: "mixed",
       });
@@ -106,15 +143,16 @@ describe("Convex backend game jobs", () => {
       expect(startedView.game.status).toBe("active");
       expect(startedView.state?.phase).toBe("dealing");
       expect(startedView.participants).toHaveLength(4);
-      expect(startedView.game.maxRounds).toBe(2);
+      expect(startedView.game.startingTricksPerHand).toBe(2);
+      expect(startedView.game.maxRounds).toBe(1);
 
       await flushJobs(t);
       const biddingView = await player.query(api.games.watch, { gameId: room.gameId });
       expect(biddingView.state?.phase).toBe("bidding");
       expect(biddingView.state?.bidTurn).toBe(0);
       expect(biddingView.legalBids.length).toBeGreaterThan(0);
-      expect(biddingView.state?.hands[0]).toHaveLength(1);
-      expect(biddingView.state?.tricksTotal).toBe(1);
+      expect(biddingView.state?.hands[0]).toHaveLength(2);
+      expect(biddingView.state?.tricksTotal).toBe(2);
       expect(biddingView.state?.hands[1][0].key).toMatch(/^hidden-/);
 
       const sequenceBeforeIdle = biddingView.game.sequence;
@@ -156,6 +194,40 @@ describe("Convex backend game jobs", () => {
     expect(view.game.defaultBotMood).toBe("champion");
     expect(view.participants).toHaveLength(4);
     expect(view.participants.slice(1).every((participant) => participant.personality === "champion")).toBe(true);
+  });
+
+  it("only lets the host advance after a round settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest({ schema, modules }) as TestHarness;
+      const host = await authedClient(t, "qa_round_host");
+      const guest = await authedClient(t, "qa_round_guest");
+
+      const room = await host.mutation(api.rooms.create, {
+        playerCount: 3,
+        decks: 1,
+        tricksPerHand: 1,
+        botMood: "mixed",
+      });
+      await guest.mutation(api.rooms.joinByCode, { inviteCode: room.inviteCode });
+      await host.mutation(api.rooms.start, { gameId: room.gameId, botMood: "mixed" });
+
+      const hostRoundEndView = await driveToRoundEnd(t, host, guest, room.gameId);
+      const guestRoundEndView = await guest.query(api.games.watch, { gameId: room.gameId });
+      expect(hostRoundEndView.viewerIsHost).toBe(true);
+      expect(guestRoundEndView.viewerIsHost).toBe(false);
+      expect(guestRoundEndView.state?.phase).toBe("round-end");
+
+      await expect(
+        guest.mutation(api.games.advanceRound, { gameId: room.gameId }),
+      ).rejects.toThrow("Only the host can advance rounds");
+      expect((await host.query(api.games.watch, { gameId: room.gameId })).state?.phase).toBe("round-end");
+
+      await host.mutation(api.games.advanceRound, { gameId: room.gameId });
+      expect((await host.query(api.games.watch, { gameId: room.gameId })).state?.phase).toBe("match-end");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps GPT bots honest instead of silently falling back when OpenAI is unavailable", async () => {

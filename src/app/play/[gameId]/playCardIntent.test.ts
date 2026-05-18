@@ -9,6 +9,7 @@ import {
 
 const aceSpades: Card = { r: "A", s: "s", d: 0, key: "As-0" };
 const kingHearts: Card = { r: "K", s: "h", d: 0, key: "Kh-0" };
+const twoClubs: Card = { r: "2", s: "c", d: 0, key: "2c-0" };
 
 const players: Player[] = [
   { id: "you", name: "You", isHuman: true, personality: "mixed" },
@@ -109,14 +110,23 @@ describe("canSendPlayCardIntent", () => {
 });
 
 describe("canQueuePreMoveIntent", () => {
-  it("does not queue a pre-move before the lead suit is known", () => {
+  it("queues a pre-move before the lead suit is known", () => {
     expect(
       canQueuePreMoveIntent({
         state: playingState({ turnIdx: 1, currentTrick: [] }),
         card: aceSpades,
         isPlayInFlight: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("keeps the selected pre-move before the lead suit is known", () => {
+    expect(
+      canKeepPreMoveIntent({
+        state: playingState({ turnIdx: 1, currentTrick: [] }),
+        cardKey: aceSpades.key,
+      }),
+    ).toBe(true);
   });
 
   it("queues an out-of-turn legal follow-suit card after the first card is led", () => {
@@ -143,6 +153,42 @@ describe("canQueuePreMoveIntent", () => {
         isPlayInFlight: false,
       }),
     ).toBe(false);
+  });
+
+  it("keeps an off-suit pre-move for the next trick after the viewer already played", () => {
+    const state = playingState({
+      turnIdx: 2,
+      currentTrick: [
+        { playerIdx: 1, card: kingHearts },
+        { playerIdx: 0, card: twoClubs },
+      ],
+    });
+
+    expect(
+      canQueuePreMoveIntent({
+        state,
+        card: aceSpades,
+        isPlayInFlight: false,
+      }),
+    ).toBe(true);
+    expect(canKeepPreMoveIntent({ state, cardKey: aceSpades.key })).toBe(true);
+  });
+
+  it("keeps a pre-move through trick-end while waiting for the next trick", () => {
+    expect(
+      canKeepPreMoveIntent({
+        state: playingState({
+          phase: "trick-end",
+          trickWinner: 1,
+          currentTrick: [
+            { playerIdx: 1, card: kingHearts },
+            { playerIdx: 2, card: aceSpades },
+            { playerIdx: 0, card: twoClubs },
+          ],
+        }),
+        cardKey: aceSpades.key,
+      }),
+    ).toBe(true);
   });
 
   it("keeps the selected pre-move through the handoff to the viewer turn", () => {

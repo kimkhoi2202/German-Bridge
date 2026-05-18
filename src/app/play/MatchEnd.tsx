@@ -51,7 +51,7 @@ export function MatchEnd({
         </h2>
         <p className="gb-end-sub">
           {state.players.length} players · {state.decks} deck{state.decks > 1 ? "s" : ""} ·{" "}
-          {formatHandLadder(state.tricksPerHand, state.maxRounds)}
+          {formatHandLadder(state.tricksPerHand, state.maxRounds, state.startingTricksPerHand ?? 1)}
         </p>
 
         <div className="gb-podium">
@@ -96,7 +96,7 @@ export function MatchEnd({
               }
             }}
           >
-            Another night
+            New game
           </Button>
         </div>
       </div>

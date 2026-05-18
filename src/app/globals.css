@@ -612,7 +612,7 @@ input:focus-visible {
 .gb-card-mark.size-xl {
   --gb-mark-rank-size: clamp(44px, 7vw, 72px);
   --gb-mark-suit-size: clamp(48px, 7.4vw, 76px);
-  --gb-mark-gap: clamp(12px, 1.6vw, 18px);
+  --gb-mark-gap: clamp(4px, 0.7vw, 8px);
 }
 
 .gb-card-mark-svg {
@@ -1502,6 +1502,28 @@ input:focus-visible {
   border: 1px solid var(--lobby-edge-soft);
   border-radius: 13px;
   background: var(--lobby-surface);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.gb-seat-tile:not(:disabled) {
+  cursor: pointer;
+}
+
+.gb-seat-tile:not(:disabled):hover,
+.gb-seat-tile:not(:disabled):focus-visible {
+  border-color: var(--lobby-edge);
+  background: var(--lobby-surface-raised);
+  box-shadow:
+    0 1px 0 oklch(0.96 0.012 154 / 0.055) inset,
+    0 0 0 1px oklch(0.92 0.05 150 / 0.045),
+    0 12px 26px oklch(0.05 0.035 155 / 0.24);
+}
+
+.gb-seat-tile:disabled {
+  cursor: default;
 }
 
 .gb-seat-tile.you {
@@ -1686,6 +1708,28 @@ input:focus-visible {
   height: 100%;
 }
 
+.gb-table-size-warning {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  display: none;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(ellipse at 50% 45%, oklch(0.18 0.034 151 / 0.92), oklch(0.04 0.014 160 / 0.97));
+  color: var(--text);
+  font-size: clamp(18px, 2vw, 24px);
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+}
+
+@media (min-width: 700px) and (max-width: 1099px), (min-width: 700px) and (max-height: 620px) {
+  .gb-table-size-warning {
+    display: grid;
+  }
+}
+
 .gb-hud {
   position: absolute;
   z-index: 24;
@@ -1744,8 +1788,8 @@ input:focus-visible {
 
 .gb-trump-pill {
   --gb-trump-pill-content-h: 22px;
-  gap: 14px;
-  padding-inline: 18px;
+  gap: 8px;
+  padding-inline: 16px;
 }
 
 .gb-trump-pill .lbl {
@@ -1755,12 +1799,12 @@ input:focus-visible {
 }
 
 .gb-trump-pill .gb-card-mark {
-  --gb-mark-gap: 1px;
+  --gb-mark-gap: 0px;
   min-height: var(--gb-trump-pill-content-h);
 }
 
 .gb-trump-pill .gb-card-suit-svg {
-  margin-left: -1px;
+  margin-left: -2px;
 }
 
 .gb-hud-spacer {
@@ -1870,6 +1914,43 @@ input:focus-visible {
   line-height: 1;
 }
 
+.gb-history-head-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.gb-history-nav-btn {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid oklch(0.96 0.012 154 / 0.14);
+  border-radius: 999px;
+  padding: 0;
+  background: #151819;
+  color: oklch(0.96 0.012 154 / 0.86);
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease-out-quart),
+    background 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart),
+    opacity 160ms var(--ease-out-quart),
+    transform 160ms var(--ease-out-quart);
+}
+
+.gb-history-nav-btn:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.gb-history-nav-icon.previous {
+  transform: rotate(180deg);
+}
+
 .gb-history-close {
   width: 48px;
   height: 48px;
@@ -1912,6 +1993,13 @@ input:focus-visible {
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .gb-history-nav-btn:not(:disabled):hover {
+    border-color: oklch(0.96 0.012 154 / 0.26);
+    background: oklch(0.18 0.012 166);
+    color: var(--text);
+    transform: scale(1.03);
+  }
+
   .gb-history-close:hover {
     color: var(--text);
     transform: scale(1.03);
@@ -1933,6 +2021,19 @@ input:focus-visible {
   border-bottom: 1px solid var(--line-muted);
   padding: 10px 24px;
   color: var(--text-subtle);
+}
+
+.gb-history-summary-plain {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.gb-history-summary-copy {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .gb-history-list {
@@ -2252,6 +2353,14 @@ input:focus-visible {
   gap: 12px;
 }
 
+.gb-trump-reveal .gb-card-mark {
+  --gb-mark-gap: clamp(0px, 0.25vw, 3px);
+}
+
+.gb-trump-reveal .gb-card-suit-svg {
+  margin-left: clamp(-4px, -0.3vw, -2px);
+}
+
 .gb-trump-name {
   color: var(--accent);
   font-family: var(--mono);
@@ -2319,6 +2428,10 @@ input:focus-visible {
 
 .gb-trick-card.winner {
   filter: none;
+}
+
+.gb-trick-card.current-winner .card {
+  box-shadow: 0 0 0 4px oklch(0.86 0.155 92 / 0.96);
 }
 
 .gb-trick-name {
@@ -2868,7 +2981,7 @@ input:focus-visible {
 }
 
 .gb-hero-card.pre-move-selectable {
-  cursor: context-menu;
+  cursor: default;
 }
 
 .gb-hero-card.playable {
@@ -3043,13 +3156,13 @@ input:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 6px;
   justify-self: center;
   flex: 0 0 auto;
   border: 1px solid var(--control-border);
   border-radius: 999px;
   min-height: 44px;
-  padding: 7px 18px;
+  padding: 7px 16px;
   background: var(--control-bg);
   color: var(--text-subtle);
   font-family: var(--mono);
@@ -3068,12 +3181,12 @@ input:focus-visible {
 .gb-bid-trump-inline .gb-card-mark {
   --gb-mark-rank-size: 20px;
   --gb-mark-suit-size: 21px;
-  --gb-mark-gap: 1px;
+  --gb-mark-gap: 0px;
   min-height: var(--gb-bid-trump-content-h);
 }
 
 .gb-bid-trump-inline .gb-card-suit-svg {
-  margin-left: -1px;
+  margin-left: -2px;
 }
 
 .gb-bid-context {
@@ -3250,7 +3363,7 @@ input:focus-visible {
 .gb-trick-banner {
   position: fixed;
   z-index: var(--z-banner);
-  top: 82px;
+  top: clamp(54px, 6.5dvh, 66px);
   left: 50%;
   display: inline-flex;
   align-items: center;
@@ -3321,6 +3434,14 @@ input:focus-visible {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+}
+
+.gb-summary-trump .gb-card-mark {
+  --gb-mark-gap: 1px;
+}
+
+.gb-summary-trump .gb-card-suit-svg {
+  margin-left: -3px;
 }
 
 .gb-summary-rows {
@@ -3399,6 +3520,16 @@ input:focus-visible {
 
 .gb-progress {
   display: none;
+}
+
+.gb-summary-wait {
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  background: var(--control-bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .gb-end-card {

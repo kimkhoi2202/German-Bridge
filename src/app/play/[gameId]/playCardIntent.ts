@@ -1,6 +1,14 @@
 import { legalCards, type Card } from "@/lib/cards";
 import type { GameState } from "@/lib/game";
 
+function isPreMovePhase(state: GameState) {
+  return state.phase === "playing" || state.phase === "trick-end";
+}
+
+function hasHumanPlayedCurrentTrick(state: GameState) {
+  return state.currentTrick.some((play) => play.playerIdx === 0);
+}
+
 export function canSendPlayCardIntent({
   state,
   legalCardKeys,
@@ -28,14 +36,17 @@ export function canKeepPreMoveIntent({
   cardKey: string | null | undefined;
 }) {
   if (!cardKey) return false;
-  if (!state || state.phase !== "playing") return false;
-  if (state.trickWinner != null) return false;
+  if (!state || !isPreMovePhase(state)) return false;
   if (state.players[0]?.isHuman !== true) return false;
-  const leadSuit = state.currentTrick[0]?.card.s ?? null;
-  if (leadSuit == null) return false;
 
   const hand = state.hands[0] ?? [];
   if (!hand.some((handCard) => handCard.key === cardKey)) return false;
+
+  if (state.phase === "trick-end" || hasHumanPlayedCurrentTrick(state)) return true;
+
+  const leadSuit = state.currentTrick[0]?.card.s ?? null;
+  if (leadSuit == null) return true;
+
   return legalCards(hand, leadSuit).some((legalCard) => legalCard.key === cardKey);
 }
 
@@ -49,6 +60,7 @@ export function canQueuePreMoveIntent({
   isPlayInFlight: boolean;
 }) {
   if (isPlayInFlight) return false;
-  if (state?.turnIdx === 0) return false;
+  if (!state || !isPreMovePhase(state)) return false;
+  if (state.phase === "playing" && state.turnIdx === 0 && state.trickWinner == null) return false;
   return canKeepPreMoveIntent({ state, cardKey: card.key });
 }

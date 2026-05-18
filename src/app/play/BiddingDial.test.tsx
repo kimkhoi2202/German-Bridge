@@ -56,27 +56,27 @@ describe("BiddingDial", () => {
     expect(screen.getByRole("button", { name: "Bid 2" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("heading", { name: "Your bid" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Bid" })).not.toBeInTheDocument();
-    expect(screen.getByText("Total bids: 2")).toBeInTheDocument();
+    expect(screen.getByText("Total bids so far: 2")).toBeInTheDocument();
     expect(screen.queryByText("2 bids total so far")).not.toBeInTheDocument();
     expect(screen.queryByText("2 bid so far")).not.toBeInTheDocument();
     expect(screen.queryByText("2 bid / 2 total")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Place bid" })).toBeDisabled();
   });
 
-  it("uses the Total bids label for each bid sum", () => {
+  it("uses the Total bids so far label for each bid sum", () => {
     const { rerender } = render(
       <BiddingDial state={biddingState({ bids: [null, 0, 0] })} />,
     );
 
-    expect(screen.getByText("Total bids: 0")).toBeInTheDocument();
+    expect(screen.getByText("Total bids so far: 0")).toBeInTheDocument();
 
     rerender(<BiddingDial state={biddingState({ bids: [null, 1, 0] })} />);
 
-    expect(screen.getByText("Total bids: 1")).toBeInTheDocument();
+    expect(screen.getByText("Total bids so far: 1")).toBeInTheDocument();
 
     rerender(<BiddingDial state={biddingState({ bids: [null, 1, 1] })} />);
 
-    expect(screen.getByText("Total bids: 2")).toBeInTheDocument();
+    expect(screen.getByText("Total bids so far: 2")).toBeInTheDocument();
   });
 
   it("toggles a selected bid off and disables submit again", () => {
