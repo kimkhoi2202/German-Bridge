@@ -27,7 +27,7 @@ const MOODS: { id: Personality; label: string }[] = [
   { id: "cautious", label: "Cautious" },
   { id: "mixed", label: "Mixed" },
   { id: "aggressive", label: "Aggressive" },
-  { id: "champion", label: "Champion" },
+  { id: "champion", label: "Theodore" },
   { id: "gpt", label: "GPT" },
   { id: "gemini", label: "Gemini" },
 ];

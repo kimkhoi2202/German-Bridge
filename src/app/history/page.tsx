@@ -220,7 +220,7 @@ function AiDebugPanel({
         </div>
         <div className="gb-ai-debug-pills">
           <span>{debug.summary.traceCount} decisions</span>
-          <span>{debug.summary.championTraceCount} champion</span>
+          <span>{debug.summary.championTraceCount} Theodore</span>
           {debug.summary.gptTraceCount > 0 && <span>{debug.summary.gptTraceCount} GPT</span>}
           {debug.summary.geminiTraceCount > 0 && <span>{debug.summary.geminiTraceCount} Gemini</span>}
           <span>{debug.summary.fallbackCount} fallbacks</span>
@@ -277,7 +277,8 @@ function AiDebugPanel({
 }
 
 function formatPolicy(policyId: string) {
-  if (policyId.startsWith("champion:")) return "Champion";
+  if (policyId.startsWith("champion:")) return "Theodore";
+  if (policyId.startsWith("theodore:")) return "Theodore";
   if (policyId.startsWith("openai:")) return "GPT";
   if (policyId.startsWith("google:")) return "Gemini";
   if (policyId.startsWith("heuristic:")) return policyId.replace("heuristic:", "Heuristic ");

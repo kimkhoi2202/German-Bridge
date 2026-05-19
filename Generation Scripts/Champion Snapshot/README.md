@@ -5,11 +5,11 @@ This folder documents how `src/lib/ai/championSnapshotWeights.json` was generate
 ## Current Mapping
 
 - Output file: `src/lib/ai/championSnapshotWeights.json`
-- Source checkpoint: `ai-checkpoints/cloud-ladder-profile-selfplay-self-rankmargin-v1-from-lr106-e6000.pt`
+- Source checkpoint: `ai-checkpoints/theodore-hybrid-platform-v1-h768-bs2048-bw130-cal45-av08-e10.pt`
 - Export script: `scripts/export_champion_snapshot.py`
 - Inference wrapper: `src/lib/ai/championSnapshot.ts`
 
-The snapshot is the current strongest corrected-ladder checkpoint as of this export. It is trained for 2-deck German Bridge with max hand size ladder rules, not the older fixed-hand interpretation.
+The snapshot is the Theodore hybrid checkpoint trained from the existing champion-style synthetic dataset plus completed production games and trace data. The app still stores the runtime personality as `champion` for compatibility, but production labels this policy as Theodore.
 
 ## Regenerate
 

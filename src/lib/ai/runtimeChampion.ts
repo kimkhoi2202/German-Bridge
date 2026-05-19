@@ -15,7 +15,7 @@ import { createChampionSnapshotPolicy, createRolloutSearchPolicy } from "./polic
 import { createSeededRng } from "./rng";
 import { championSnapshotId } from "./championSnapshot";
 
-export const runtimeChampionPolicyId = "playable-portfolio-champion-rollout-6x2-bid4-scored";
+export const runtimeChampionPolicyId = "theodore:hybrid-platform-rollout-6x2-bid4-scored";
 const TRACE_TOP_ACTIONS = 5;
 
 const runtimeChampionPolicy = createRolloutSearchPolicy({
@@ -25,7 +25,7 @@ const runtimeChampionPolicy = createRolloutSearchPolicy({
   bidRolloutsPerCandidate: 4,
   bidDepthTricks: 2,
   utilityMode: "scored",
-  fallback: createChampionSnapshotPolicy("playable-champion-fallback"),
+  fallback: createChampionSnapshotPolicy("theodore-hybrid-fallback"),
 });
 
 const BID_AMBITION_SCORE_WINDOW = 4;
@@ -100,7 +100,7 @@ function runtimeDecisionSeed(state: GameState, playerIdx: number, kind: "bid" | 
     .join(",");
   const bidCount = state.bids.filter((bid) => bid != null).length;
   return [
-    "runtime-champion",
+    "runtime-theodore",
     kind,
     `round:${state.round}`,
     `trick:${state.trickIdx}`,

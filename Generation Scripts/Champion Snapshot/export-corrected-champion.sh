@@ -7,5 +7,5 @@ cd "${ROOT}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 "${PYTHON_BIN}" scripts/export_champion_snapshot.py \
-  --checkpoint ai-checkpoints/cloud-ladder-profile-selfplay-self-rankmargin-v1-from-lr106-e6000.pt \
+  --checkpoint ai-checkpoints/theodore-hybrid-platform-v1-h768-bs2048-bw130-cal45-av08-e10.pt \
   --out src/lib/ai/championSnapshotWeights.json
