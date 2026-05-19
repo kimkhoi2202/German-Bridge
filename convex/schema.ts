@@ -149,6 +149,91 @@ export default defineSchema({
     .index("by_gameId_and_sequence", ["gameId", "sequence"])
     .index("by_gameId", ["gameId"]),
 
+  trainingDecisions: defineTable({
+    gameId: v.id("games"),
+    sequence: v.number(),
+    seatIdx: v.number(),
+    actorKind: v.union(v.literal("human"), v.literal("bot")),
+    phase: v.union(v.literal("bidding"), v.literal("playing")),
+    round: v.number(),
+    trickIdx: v.number(),
+    playerCount: v.number(),
+    decks: v.number(),
+    tricksTotal: v.number(),
+    personality: v.union(
+      v.literal("cautious"),
+      v.literal("mixed"),
+      v.literal("aggressive"),
+      v.literal("champion"),
+      v.literal("gpt"),
+      v.literal("gemini"),
+    ),
+    policyId: v.string(),
+    requestedPolicyId: v.string(),
+    checkpointId: v.optional(v.string()),
+    fallback: v.boolean(),
+    fallbackReason: v.optional(v.string()),
+    chosenAction: v.any(),
+    legalActionCount: v.number(),
+    observation: v.any(),
+    traceId: v.optional(v.id("aiDecisionTraces")),
+    recordingVersion: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_gameId_and_sequence", ["gameId", "sequence"])
+    .index("by_gameId_and_seatIdx", ["gameId", "seatIdx"])
+    .index("by_actorKind_and_createdAt", ["actorKind", "createdAt"])
+    .index("by_policyId_and_createdAt", ["policyId", "createdAt"]),
+
+  trainingGameSummaries: defineTable({
+    gameId: v.id("games"),
+    status: v.union(v.literal("completed"), v.literal("abandoned")),
+    playerCount: v.number(),
+    decks: v.number(),
+    startingTricksPerHand: v.optional(v.number()),
+    tricksPerHand: v.number(),
+    maxRounds: v.number(),
+    defaultBotMood: v.optional(
+      v.union(
+        v.literal("cautious"),
+        v.literal("mixed"),
+        v.literal("aggressive"),
+        v.literal("champion"),
+        v.literal("gpt"),
+        v.literal("gemini"),
+      ),
+    ),
+    participants: v.array(
+      v.object({
+        seatIdx: v.number(),
+        kind: v.union(v.literal("human"), v.literal("bot")),
+        name: v.string(),
+        username: v.optional(v.string()),
+        personality: v.union(
+          v.literal("cautious"),
+          v.literal("mixed"),
+          v.literal("aggressive"),
+          v.literal("champion"),
+          v.literal("gpt"),
+          v.literal("gemini"),
+        ),
+        score: v.number(),
+        rank: v.number(),
+        winner: v.boolean(),
+      }),
+    ),
+    scores: v.array(v.number()),
+    ranks: v.array(v.number()),
+    winnerSeatIdx: v.optional(v.number()),
+    decisionCount: v.number(),
+    humanDecisionCount: v.number(),
+    botDecisionCount: v.number(),
+    completedAt: v.number(),
+    recordingVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_gameId", ["gameId"]),
+
   aiBotMemories: defineTable({
     gameId: v.id("games"),
     seatIdx: v.number(),

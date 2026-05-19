@@ -820,6 +820,35 @@ describe("Convex backend game jobs", () => {
       expect(stats.gamesPlayed).toBe(1);
       expect(stats.gamesWon).toBeGreaterThanOrEqual(0);
       expect("lastCompletedAt" in stats ? stats.lastCompletedAt : null).toEqual(expect.any(Number));
+
+      const trainingDecisions = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("trainingDecisions")
+          .withIndex("by_gameId_and_sequence", (q) => q.eq("gameId", room.gameId))
+          .collect();
+      });
+      expect(trainingDecisions.length).toBeGreaterThan(0);
+      expect(trainingDecisions.some((decision) => decision.actorKind === "human")).toBe(true);
+      expect(trainingDecisions.some((decision) => decision.actorKind === "bot")).toBe(true);
+      expect(trainingDecisions.every((decision) => decision.legalActionCount > 0)).toBe(true);
+      expect(trainingDecisions.every((decision) => decision.recordingVersion === 1)).toBe(true);
+
+      const trainingSummary = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("trainingGameSummaries")
+          .withIndex("by_gameId", (q) => q.eq("gameId", room.gameId))
+          .unique();
+      });
+      expect(trainingSummary?.status).toBe("completed");
+      expect(trainingSummary?.decisionCount).toBe(trainingDecisions.length);
+      expect(trainingSummary?.humanDecisionCount).toBeGreaterThan(0);
+      expect(trainingSummary?.botDecisionCount).toBeGreaterThan(0);
+      expect(trainingSummary?.participants).toHaveLength(4);
+      expect(trainingSummary?.participants.some((participant) => participant.winner)).toBe(true);
+
+      const trainingHealth = await player.query(api.games.trainingHealth, { limit: 10 });
+      expect(trainingHealth.summarizedCompletedGames).toBeGreaterThanOrEqual(1);
+      expect(trainingHealth.recordedDecisionCount).toBeGreaterThanOrEqual(trainingDecisions.length);
     } finally {
       vi.useRealTimers();
     }

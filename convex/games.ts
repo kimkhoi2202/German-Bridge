@@ -35,12 +35,14 @@ import {
 import {
   appendAiDecisionTrace,
   appendEvent,
+  appendTrainingDecision,
   getAiBotMemory,
   getGameOrThrow,
   getParticipantForUser,
   getParticipants,
   getStateOrThrow,
   requireParticipant,
+  writeTrainingGameSummary,
   writeAiBotMemory,
   writeGameState,
 } from "./lib/db";
@@ -114,6 +116,22 @@ function shortDebugText(value: unknown, limit = 500) {
 
 function cardDebugLabel(card: { key: string; r: string; s: string; d: number }) {
   return `${card.key}(${card.r}${card.s.toUpperCase()}d${card.d + 1})`;
+}
+
+function humanPolicyId(participant: Doc<"gameParticipants">) {
+  return participant.username ? `human:${participant.username}` : "human:anonymous";
+}
+
+function bidTrainingAction(bid: number) {
+  return { kind: "bid", bid, label: `Bid ${bid}` };
+}
+
+function cardTrainingAction(card: { key: string; r: string; s: string; d: number }) {
+  return {
+    kind: "card",
+    cardKey: card.key,
+    label: `${card.r}${card.s.toUpperCase()} deck ${card.d + 1}`,
+  };
 }
 
 function llmFailureDebug(
@@ -271,12 +289,22 @@ async function updateStatsForCompletedGame(
 async function completeIfNeeded(ctx: MutationCtx, game: Doc<"games">, state: GameState) {
   if (state.phase !== "match-end") return game.sequence;
   const winnerIdx = await updateStatsForCompletedGame(ctx, game, state);
+  const scores = finalScores(state);
+  const finishedAt = Date.now();
+  await writeTrainingGameSummary(ctx, {
+    game,
+    status: "completed",
+    participants: await getParticipants(ctx, game._id),
+    scores,
+    winnerSeatIdx: winnerIdx,
+    completedAt: finishedAt,
+  });
   return await appendEvent(ctx, game, {
     type: "game_completed",
-    payload: { scores: finalScores(state), winnerSeatIdx: winnerIdx },
+    payload: { scores, winnerSeatIdx: winnerIdx },
     patch: {
       status: "completed",
-      finishedAt: Date.now(),
+      finishedAt,
       winnerSeatIdx: winnerIdx,
     },
   });
@@ -382,13 +410,31 @@ export const placeBid = mutation({
     if (!legalBidValues(state, participant.seatIdx).includes(Math.trunc(args.bid))) {
       throw new Error("Illegal bid");
     }
+    const observation = createObservation(state, participant.seatIdx);
+    const bid = Math.trunc(args.bid);
     state = applyPlaceBid(state, participant.seatIdx, Math.trunc(args.bid));
     await writeGameState(ctx, game._id, state);
     const sequence = await appendEvent(ctx, game, {
       type: "bid",
       actorUserId: userId,
       seatIdx: participant.seatIdx,
-      payload: { bid: Math.trunc(args.bid) },
+      payload: { bid },
+    });
+    const policyId = humanPolicyId(participant);
+    await appendTrainingDecision(ctx, {
+      gameId: game._id,
+      sequence,
+      seatIdx: participant.seatIdx,
+      actorKind: "human",
+      phase: "bidding",
+      round: observation.round,
+      trickIdx: observation.trickIdx,
+      personality: participant.personality,
+      policyId,
+      requestedPolicyId: policyId,
+      chosenAction: bidTrainingAction(bid),
+      legalActionCount: observation.legalBids.length,
+      observation,
     });
     await scheduleNext(ctx, game._id, state, sequence);
     return { gameId: game._id, sequence };
@@ -408,6 +454,7 @@ export const playCard = mutation({
     if (!legalCardKeys(state, participant.seatIdx).includes(args.cardKey)) {
       throw new Error("Illegal card");
     }
+    const observation = createObservation(state, participant.seatIdx);
     const card = findCardInSeatHand(state, participant.seatIdx, args.cardKey);
     if (!card) throw new Error("Card not found");
     state = applyPlayCard(state, participant.seatIdx, card);
@@ -417,6 +464,22 @@ export const playCard = mutation({
       actorUserId: userId,
       seatIdx: participant.seatIdx,
       payload: { card },
+    });
+    const policyId = humanPolicyId(participant);
+    await appendTrainingDecision(ctx, {
+      gameId: game._id,
+      sequence,
+      seatIdx: participant.seatIdx,
+      actorKind: "human",
+      phase: "playing",
+      round: observation.round,
+      trickIdx: observation.trickIdx,
+      personality: participant.personality,
+      policyId,
+      requestedPolicyId: policyId,
+      chosenAction: cardTrainingAction(card),
+      legalActionCount: observation.legalCards.length,
+      observation,
     });
     await scheduleNext(ctx, game._id, state, sequence);
     return { gameId: game._id, sequence };
@@ -512,10 +575,29 @@ export const botTurn = internalMutation({
     state = result.state;
     await writeGameState(ctx, game._id, state);
     const sequence = await appendEvent(ctx, game, result.event);
-    await appendAiDecisionTrace(ctx, {
+    const traceId = await appendAiDecisionTrace(ctx, {
       gameId: game._id,
       sequence,
       ...result.aiTrace,
+    });
+    await appendTrainingDecision(ctx, {
+      gameId: game._id,
+      sequence,
+      seatIdx: result.aiTrace.seatIdx,
+      actorKind: "bot",
+      phase: result.aiTrace.phase,
+      round: result.aiTrace.round,
+      trickIdx: result.aiTrace.trickIdx,
+      personality: result.aiTrace.decision.personality,
+      policyId: result.aiTrace.decision.policyId,
+      requestedPolicyId: result.aiTrace.decision.requestedPolicyId,
+      checkpointId: result.aiTrace.decision.checkpointId,
+      fallback: result.aiTrace.decision.fallback,
+      fallbackReason: result.aiTrace.decision.fallbackReason,
+      chosenAction: result.aiTrace.decision.chosenAction,
+      legalActionCount: result.aiTrace.decision.legalActionCount,
+      observation: result.aiTrace.observation,
+      traceId,
     });
     await scheduleNext(ctx, game._id, state, sequence);
     return { sequence };
@@ -689,10 +771,29 @@ export const applyGptBotTurn = internalMutation({
       await writeAiBotMemory(ctx, game._id, aiTrace.seatIdx, nextMemory);
     }
     const sequence = await appendEvent(ctx, game, event);
-    await appendAiDecisionTrace(ctx, {
+    const traceId = await appendAiDecisionTrace(ctx, {
       gameId: game._id,
       sequence,
       ...aiTrace,
+    });
+    await appendTrainingDecision(ctx, {
+      gameId: game._id,
+      sequence,
+      seatIdx: aiTrace.seatIdx,
+      actorKind: "bot",
+      phase: aiTrace.phase,
+      round: aiTrace.round,
+      trickIdx: aiTrace.trickIdx,
+      personality: aiTrace.decision.personality,
+      policyId: aiTrace.decision.policyId,
+      requestedPolicyId: aiTrace.decision.requestedPolicyId,
+      checkpointId: aiTrace.decision.checkpointId,
+      fallback: aiTrace.decision.fallback,
+      fallbackReason: aiTrace.decision.fallbackReason,
+      chosenAction: aiTrace.decision.chosenAction,
+      legalActionCount: aiTrace.decision.legalActionCount,
+      observation: aiTrace.observation,
+      traceId,
     });
     await scheduleNext(ctx, game._id, state, sequence);
     return { sequence };
@@ -967,10 +1068,29 @@ export const applyGeminiBotTurn = internalMutation({
       await writeAiBotMemory(ctx, game._id, aiTrace.seatIdx, nextMemory);
     }
     const sequence = await appendEvent(ctx, game, event);
-    await appendAiDecisionTrace(ctx, {
+    const traceId = await appendAiDecisionTrace(ctx, {
       gameId: game._id,
       sequence,
       ...aiTrace,
+    });
+    await appendTrainingDecision(ctx, {
+      gameId: game._id,
+      sequence,
+      seatIdx: aiTrace.seatIdx,
+      actorKind: "bot",
+      phase: aiTrace.phase,
+      round: aiTrace.round,
+      trickIdx: aiTrace.trickIdx,
+      personality: aiTrace.decision.personality,
+      policyId: aiTrace.decision.policyId,
+      requestedPolicyId: aiTrace.decision.requestedPolicyId,
+      checkpointId: aiTrace.decision.checkpointId,
+      fallback: aiTrace.decision.fallback,
+      fallbackReason: aiTrace.decision.fallbackReason,
+      chosenAction: aiTrace.decision.chosenAction,
+      legalActionCount: aiTrace.decision.legalActionCount,
+      observation: aiTrace.observation,
+      traceId,
     });
     await scheduleNext(ctx, game._id, state, sequence);
     return { sequence };
@@ -1172,6 +1292,54 @@ export const replay = query({
       .take(1000);
     const participants = await getParticipants(ctx, args.gameId);
     return { game, participants, events };
+  },
+});
+
+export const trainingHealth = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireUserId(ctx);
+    const limit = Math.min(100, Math.max(1, Math.trunc(args.limit ?? 50)));
+    const completedGames = await ctx.db
+      .query("games")
+      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .order("desc")
+      .take(limit);
+
+    let summarizedCompletedGames = 0;
+    let recordedDecisionCount = 0;
+    let humanDecisionCount = 0;
+    let botDecisionCount = 0;
+    const missingSummaryGameIds: Id<"games">[] = [];
+    let latestCompletedAt = 0;
+
+    for (const game of completedGames) {
+      latestCompletedAt = Math.max(latestCompletedAt, game.finishedAt ?? 0);
+      const summary = await ctx.db
+        .query("trainingGameSummaries")
+        .withIndex("by_gameId", (q) => q.eq("gameId", game._id))
+        .unique();
+      if (!summary) {
+        missingSummaryGameIds.push(game._id);
+        continue;
+      }
+      summarizedCompletedGames += 1;
+      recordedDecisionCount += summary.decisionCount;
+      humanDecisionCount += summary.humanDecisionCount;
+      botDecisionCount += summary.botDecisionCount;
+    }
+
+    return {
+      completedGamesChecked: completedGames.length,
+      summarizedCompletedGames,
+      missingSummaryCount: missingSummaryGameIds.length,
+      missingSummaryGameIds,
+      recordedDecisionCount,
+      humanDecisionCount,
+      botDecisionCount,
+      latestCompletedAt: latestCompletedAt || null,
+      recordingVersion: 1,
+    };
   },
 });
 
