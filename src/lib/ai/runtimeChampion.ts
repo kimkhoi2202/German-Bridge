@@ -15,7 +15,7 @@ import { createChampionSnapshotPolicy, createRolloutSearchPolicy } from "./polic
 import { createSeededRng } from "./rng";
 import { championSnapshotId } from "./championSnapshot";
 
-export const runtimeChampionPolicyId = "theodore:hybrid-platform-rollout-6x2-bid4-scored";
+export const runtimeChampionPolicyId = "human-playstyle-champion-rollout-6x2-bid4-scored";
 const TRACE_TOP_ACTIONS = 5;
 
 const runtimeChampionPolicy = createRolloutSearchPolicy({
