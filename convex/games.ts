@@ -288,7 +288,7 @@ async function scheduleNext(ctx: MutationCtx, gameId: Id<"games">, state: GameSt
     return;
   }
   if (state.phase === "trump" || state.phase === "trick-end") {
-    await ctx.scheduler.runAfter(state.phase === "trump" ? 1400 : 1300, internal.games.advancePhase, {
+    await ctx.scheduler.runAfter(state.phase === "trump" ? 1000 : 700, internal.games.advancePhase, {
       gameId,
       expectedSequence: sequence,
     });
@@ -311,7 +311,7 @@ async function scheduleNext(ctx: MutationCtx, gameId: Id<"games">, state: GameSt
       });
       return;
     }
-    await ctx.scheduler.runAfter(850, internal.games.botTurn, { gameId, expectedSequence: sequence });
+    await ctx.scheduler.runAfter(650, internal.games.botTurn, { gameId, expectedSequence: sequence });
   }
 }
 

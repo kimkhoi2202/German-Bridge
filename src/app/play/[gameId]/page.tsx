@@ -8,6 +8,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { AuthGate } from "@/components/AuthGate";
 import type { Personality } from "@/lib/bot";
 import type { Card } from "@/lib/cards";
+import { playCard as applyLocalPlayCard, type GameState } from "@/lib/game";
 import { Avatar } from "@/components/Avatar";
 import { Button } from "@/components/base/buttons/button";
 import { formatHandLadder } from "@/lib/matchLabels";
@@ -31,6 +32,18 @@ const MOODS: { id: Personality; label: string }[] = [
   { id: "gpt", label: "GPT" },
   { id: "gemini", label: "Gemini" },
 ];
+
+function optimisticHumanPlayState(state: GameState | null | undefined, card: Card): GameState | null {
+  if (!state || state.phase !== "playing" || state.turnIdx !== 0 || state.trickWinner != null) {
+    return null;
+  }
+
+  try {
+    return applyLocalPlayCard(state, 0, card);
+  } catch {
+    return null;
+  }
+}
 
 export default function LiveGamePage() {
   return (
@@ -65,6 +78,7 @@ function LiveGameContent() {
   const [pendingAdvance, setPendingAdvance] = useState(false);
   const [pendingRandomizeSeats, setPendingRandomizeSeats] = useState(false);
   const [pendingPlayCardKey, setPendingPlayCardKey] = useState<string | null>(null);
+  const [optimisticState, setOptimisticState] = useState<GameState | null>(null);
   const [preMoveCardKey, setPreMoveCardKey] = useState<string | null>(null);
   const pendingBidSequenceRef = useRef<number | null>(null);
   const pendingAdvanceSequenceRef = useRef<number | null>(null);
@@ -173,6 +187,7 @@ function LiveGameContent() {
       pendingPlayRef.current = false;
       pendingPlaySequenceRef.current = null;
       setPendingPlayCardKey(null);
+      setOptimisticState(null);
     }
   }, [data?.game.sequence]);
 
@@ -225,6 +240,7 @@ function LiveGameContent() {
     pendingPlayRef.current = true;
     pendingPlaySequenceRef.current = data?.game.sequence ?? null;
     setPendingPlayCardKey(card.key);
+    setOptimisticState(optimisticHumanPlayState(data?.state, card));
     setError(null);
 
     try {
@@ -234,6 +250,7 @@ function LiveGameContent() {
       pendingPlayRef.current = false;
       pendingPlaySequenceRef.current = null;
       setPendingPlayCardKey(null);
+      setOptimisticState(null);
       setError(err instanceof Error ? err.message : "Action failed");
     }
   }, [data?.game.sequence, data?.legalCardKeys, data?.state, gameId, playCard]);
@@ -466,10 +483,12 @@ function LiveGameContent() {
     );
   }
 
+  const visibleState = optimisticState ?? data.state;
+
   return (
     <div className="gb-play-screen relative" data-cardback={cardBack} data-layout={layout}>
       <TableView
-        state={data.state}
+        state={visibleState}
         onBid={handleBid}
         onPlay={handlePlayCard}
         onPreMove={handlePreMoveCard}
@@ -481,18 +500,18 @@ function LiveGameContent() {
           router.push("/");
         })}
       />
-      <TrickBanner state={data.state} />
-      {data.state.phase === "round-end" && (
+      <TrickBanner state={visibleState} />
+      {visibleState.phase === "round-end" && (
         <RoundSummary
-          state={data.state}
+          state={visibleState}
           canAdvance={data.viewerIsHost}
           isAdvancing={pendingAdvance}
           onAdvance={handleAdvanceRound}
         />
       )}
-      {data.state.phase === "match-end" && (
+      {visibleState.phase === "match-end" && (
         <MatchEnd
-          state={data.state}
+          state={visibleState}
           onFinish={(destination) => router.push(destination === "history" ? "/history" : "/")}
         />
       )}
