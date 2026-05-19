@@ -288,7 +288,7 @@ async function scheduleNext(ctx: MutationCtx, gameId: Id<"games">, state: GameSt
     return;
   }
   if (state.phase === "trump" || state.phase === "trick-end") {
-    await ctx.scheduler.runAfter(state.phase === "trump" ? 1000 : 700, internal.games.advancePhase, {
+    await ctx.scheduler.runAfter(state.phase === "trump" ? 1000 : 3000, internal.games.advancePhase, {
       gameId,
       expectedSequence: sequence,
     });
